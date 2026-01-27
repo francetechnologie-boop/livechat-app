@@ -1,0 +1,22 @@
+{
+  "id": "module-manager",
+  "name": "Gestion des modules",
+  "description": "Activation et installation des fonctionnalités du tableau de bord.",
+  "category": "admin",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true,
+  "paths": {
+    "backend": "./backend",
+    "frontend": "./frontend"
+  },
+  "database": {
+    "table": "modules",
+    "record": {
+      "name": "module-manager",
+      "version": "1.0.0",
+      "active": 1,
+      "install": 1
+    }
+  }
+}

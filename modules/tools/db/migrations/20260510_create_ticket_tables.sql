@@ -1,0 +1,124 @@
+-- Create ticket tables (mod_tools_tickets + mod_tools_ticket_messages)
+CREATE TABLE IF NOT EXISTS mod_tools_tickets (
+  id SERIAL PRIMARY KEY,
+  org_id TEXT NULL,
+  email_message_id TEXT NOT NULL,
+  thread_id TEXT NULL,
+  subject TEXT NULL,
+  customer_name VARCHAR(255) NULL,
+  customer_email VARCHAR(255) NULL,
+  customer_phone VARCHAR(64) NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'NEW',
+  priority VARCHAR(32) NOT NULL DEFAULT 'normal',
+  queue VARCHAR(128) NOT NULL DEFAULT 'Support produit',
+  type VARCHAR(32) NOT NULL DEFAULT 'EMAIL',
+  source VARCHAR(64) NOT NULL DEFAULT 'email',
+  body_text TEXT NULL,
+  body_html TEXT NULL,
+  channel_meta JSONB NULL,
+  received_at TIMESTAMP NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_mod_tools_tickets_org_message ON mod_tools_tickets (COALESCE(org_id, '-1'), email_message_id);
+CREATE INDEX IF NOT EXISTS idx_mod_tools_tickets_org ON mod_tools_tickets(org_id);
+
+CREATE TABLE IF NOT EXISTS mod_tools_ticket_messages (
+  id SERIAL PRIMARY KEY,
+  ticket_id INT NOT NULL,
+  org_id TEXT NULL,
+  sender VARCHAR(64) NOT NULL DEFAULT 'customer',
+  body_text TEXT NULL,
+  body_html TEXT NULL,
+  channel_meta JSONB NULL,
+  received_at TIMESTAMP NULL,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_mod_tools_ticket_messages_ticket ON mod_tools_ticket_messages(ticket_id);
+CREATE INDEX IF NOT EXISTS idx_mod_tools_ticket_messages_org ON mod_tools_ticket_messages(org_id);
+
+DO $$ BEGIN
+  IF to_regclass('public.organizations') IS NOT NULL AND EXISTS (
+    SELECT 1
+      FROM pg_index i
+      JOIN pg_class t ON t.oid = i.indrelid
+      JOIN pg_namespace n ON n.oid = t.relnamespace
+      JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (i.indkey)
+     WHERE n.nspname = 'public' AND t.relname = 'organizations'
+       AND i.indisunique = TRUE
+       AND array_length(i.indkey,1) = 1
+       AND a.attname = 'id'
+  ) THEN
+    DECLARE
+      org_id_type TEXT := NULL;
+    BEGIN
+      SELECT data_type INTO org_id_type
+        FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'organizations'
+         AND column_name = 'id'
+       LIMIT 1;
+    EXCEPTION WHEN OTHERS THEN
+      org_id_type := NULL;
+    END;
+    IF org_id_type IN ('text', 'character varying') THEN
+      BEGIN
+        ALTER TABLE public.mod_tools_tickets
+          ADD CONSTRAINT fk_mod_tools_tickets_org
+          FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE SET NULL;
+      EXCEPTION
+        WHEN duplicate_object THEN NULL;
+        WHEN others THEN NULL;
+      END;
+    END IF;
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'fk_mod_tools_ticket_messages_ticket'
+  ) THEN
+    ALTER TABLE mod_tools_ticket_messages
+      ADD CONSTRAINT fk_mod_tools_ticket_messages_ticket
+      FOREIGN KEY (ticket_id) REFERENCES mod_tools_tickets(id) ON DELETE CASCADE;
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF to_regclass('public.organizations') IS NOT NULL AND EXISTS (
+    SELECT 1
+      FROM pg_index i
+      JOIN pg_class t ON t.oid = i.indrelid
+      JOIN pg_namespace n ON n.oid = t.relnamespace
+      JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (i.indkey)
+     WHERE n.nspname = 'public' AND t.relname = 'organizations'
+       AND i.indisunique = TRUE
+       AND array_length(i.indkey,1) = 1
+       AND a.attname = 'id'
+  ) THEN
+    DECLARE
+      org_id_type TEXT := NULL;
+    BEGIN
+      SELECT data_type INTO org_id_type
+        FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'organizations'
+         AND column_name = 'id'
+       LIMIT 1;
+    EXCEPTION WHEN OTHERS THEN
+      org_id_type := NULL;
+    END;
+    IF org_id_type IN ('text', 'character varying') THEN
+      BEGIN
+        ALTER TABLE public.mod_tools_ticket_messages
+          ADD CONSTRAINT fk_mod_tools_ticket_messages_org
+          FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE SET NULL;
+      EXCEPTION
+        WHEN duplicate_object THEN NULL;
+        WHEN others THEN NULL;
+      END;
+    END IF;
+  END IF;
+END $$;

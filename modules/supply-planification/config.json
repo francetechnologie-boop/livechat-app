@@ -1,0 +1,10 @@
+{
+  "id": "supply-planification",
+  "name": "Supply Planification",
+  "description": "Inventory snapshots + purchase planning board (coverage-based).",
+  "category": "automation",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true
+}
+

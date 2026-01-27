@@ -1,0 +1,7 @@
+{
+  "name": "db-mysql",
+  "version": "1.0.0",
+  "enabled": true,
+  "hasProfil": true,
+  "hooks": { "onModuleLoaded": "onModuleLoaded", "onModuleDisabled": "onModuleDisabled" }
+}

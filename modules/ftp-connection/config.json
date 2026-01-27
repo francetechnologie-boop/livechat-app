@@ -1,0 +1,10 @@
+{
+  "id": "ftp-connection",
+  "name": "FTP Connection",
+  "description": "Manage FTP/SFTP connection profiles to external VPS.",
+  "category": "integration",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true
+}
+

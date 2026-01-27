@@ -1,0 +1,12 @@
+{
+  "id": "category_data_update",
+  "name": "Category Data Update",
+  "description": "Fill missing category data and translate fields using a selected MySQL profile and table prefix.",
+  "category": "automation",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true,
+  "surfaces": { "main": "Category Data Update" },
+  "defaultSurface": "main"
+}
+

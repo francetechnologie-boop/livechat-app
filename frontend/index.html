@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="shortcut icon" href="/favicon.svg" />
+    <title>Livechat – Smartsupp UI</title>
+    <script src="https://unpkg.com/twemoji@14.0.2/dist/twemoji.min.js" crossorigin="anonymous"></script>
+</head>
+  <body>
+    <div id="root"></div>
+    <script>
+      // Pre-boot normalization: enforce "#/" prefix and legacy agent alias
+      (function(){
+        try {
+          var h = String(window.location.hash || '');
+          // 1) legacy alias: '#/agent' or '#agent' -> '#/agents'
+          if (/^#\/?agent(\/|$)/i.test(h)) {
+            var tail = h.replace(/^#\/?agent/i, '');
+            var next = '#/agents' + tail;
+            if (window.location.hash !== next) return window.location.replace(next);
+          }
+          // 2) enforce '#/<...>' form when a hash is present but missing '/'
+          if (/^#[^/]/.test(h)) {
+            var fixed = '#/' + h.replace(/^#/, '');
+            if (window.location.hash !== fixed) return window.location.replace(fixed);
+          }
+        } catch (e) {}
+      })();
+    </script>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

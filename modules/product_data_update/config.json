@@ -1,0 +1,12 @@
+{
+  "id": "product_data_update",
+  "name": "Product Data Update",
+  "description": "Fill missing product data and translate fields using a selected MySQL profile and table prefix.",
+  "category": "automation",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true,
+  "surfaces": { "main": "Product Data Update" },
+  "defaultSurface": "main"
+}
+

@@ -1,0 +1,11 @@
+{
+  "id": "gateway",
+  "name": "Gateway",
+  "description": "Gateway routes (SMS/calls).",
+  "category": "integration",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true,
+  "surfaces": { "main": "Gateway" },
+  "defaultSurface": "main"
+}

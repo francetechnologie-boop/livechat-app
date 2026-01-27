@@ -1,0 +1,12 @@
+{
+  "id": "db-postgresql",
+  "name": "DB Manager PostgreSQL",
+  "description": "Manage PostgreSQL profiles and utilities.",
+  "category": "database",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true,
+  "hasProfil": true,
+  "surfaces": { "profiles": "Profiles" },
+  "defaultSurface": "profiles"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "paypal-api",
+  "name": "PayPal API",
+  "description": "PayPal integration: manage multiple PayPal REST API accounts (client id/secret) and validate credentials.",
+  "category": "integration",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true
+}
+

@@ -1,0 +1,9 @@
+{
+  "id": "system",
+  "name": "System",
+  "description": "Core system behaviors and settings.",
+  "category": "core",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true
+}

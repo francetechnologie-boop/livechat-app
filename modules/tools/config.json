@@ -1,0 +1,9 @@
+{
+  "id": "tools",
+  "name": "Tools",
+  "description": "General purpose tools.",
+  "category": "utilities",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true
+}

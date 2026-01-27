@@ -1,0 +1,15 @@
+{
+  "name": "dhl",
+  "version": "1.0.0",
+  "enabled": true,
+  "hasMcpTool": true,
+  "hasProfil": true,
+  "mcpTools": [
+    { "name": "dhl.track", "description": "Track a DHL shipment (internal /api/dhl/track wrapper)" },
+    { "name": "dhl.presta.order_customer", "description": "Fetch Presta customer info for an order (via MCP2 mysql tool)" }
+  ],
+  "hooks": {
+    "onModuleLoaded": "onModuleLoaded",
+    "onModuleDisabled": "onModuleDisabled"
+  }
+}

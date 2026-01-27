@@ -1,0 +1,11 @@
+{
+  "name": "google-api",
+  "version": "1.0.0",
+  "enabled": true,
+  "hooks": { "onModuleLoaded": "onModuleLoaded", "onModuleDisabled": "onModuleDisabled" },
+  "hasMcpTool": true,
+  "mcpTools": [
+    { "name": "gmail.list_messages", "description": "List Gmail messages for a profile" },
+    { "name": "gmail.get_message", "description": "Fetch a single Gmail message" }
+  ]
+}

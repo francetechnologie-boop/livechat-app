@@ -1,0 +1,13 @@
+{
+  "name": "testmcp",
+  "version": "1.0.0",
+  "enabled": true,
+  "hooks": { "onModuleLoaded": "onModuleLoaded", "onModuleDisabled": "onModuleDisabled" },
+  "hasMcpTool": true,
+  "mcpTools": [
+    { "name": "ping", "description": "Responds with ok:true" },
+    { "name": "time.now", "description": "Returns ISO timestamp" },
+    { "name": "random.int", "description": "Random integer in [min,max]" },
+    { "name": "echo", "description": "Echo back a message" }
+  ]
+}

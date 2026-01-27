@@ -1,0 +1,13 @@
+{
+  "name": "db-mysql",
+  "version": "1.0.0",
+  "enabled": true,
+  "hasProfil": true,
+  "hooks": { "onModuleLoaded": "onModuleLoaded", "onModuleDisabled": "onModuleDisabled" },
+  "hasMcpTool": true,
+  "mcpTools": [
+    { "name": "ping", "description": "Responds with ok:true" },
+    { "name": "time.now", "description": "Returns ISO timestamp" },
+    { "name": "db.query.mysql", "description": "Run a safe SELECT via MySQL" }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "name": "db-postgresql",
+  "version": "1.0.0",
+  "enabled": true,
+  "hooks": {
+    "onModuleLoaded": "onModuleLoaded",
+    "onModuleDisabled": "onModuleDisabled"
+  },
+  "hasMcpTool": true,
+  "hasProfil": true,
+  "mcpTools": [
+    { "name": "ping", "description": "Responds with ok:true" },
+    { "name": "time.now", "description": "Returns ISO timestamp" },
+    { "name": "db.query.postgres", "description": "Run a safe SELECT via PostgreSQL" }
+  ]
+}
+

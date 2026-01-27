@@ -1,0 +1,27 @@
+{
+  "tree": [
+    {
+      "entry_id": "mod-module-manager",
+      "label": "Gestion des modules",
+      "hash": "#/module-manager"
+    },
+    {
+      "entry_id": "mod-agents",
+      "label": "Agents",
+      "hash": "#/agents",
+      "children": [
+        { "entry_id": "agents-preferences", "label": "Preferences", "hash": "#/agents/preferences" },
+        { "entry_id": "agents-organization", "label": "Organization", "hash": "#/agents/organization" },
+        { "entry_id": "agents-users", "label": "Users", "hash": "#/agents/users" },
+        { "entry_id": "agents-roles", "label": "Roles", "hash": "#/agents/roles" },
+        { "entry_id": "agents-members", "label": "Members", "hash": "#/agents/members" }
+      ]
+    },
+    {
+      "entry_id": "mod-logs2",
+      "label": "Logs 2",
+      "hash": "#/logs2"
+    }
+  ]
+}
+

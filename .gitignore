@@ -1,0 +1,26 @@
+# deps / builds
+node_modules/
+dist/
+build/
+out/
+coverage/
+*.log
+frontend/public/tinymce/
+
+# env / secrets
+.env
+.env.*
+*.local
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# binaries / DBs
+*.mmdb
+
+prompt_next_step.txt
+
+prompt_next_step.txt

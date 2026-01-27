@@ -1,0 +1,64 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws: wss: http: https:; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self';" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MCP Desktop Client</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="container">
+      <h1>MCP Desktop Client</h1>
+
+      <div class="section">
+        <label for="wsUrl">WebSocket URL</label>
+        <input id="wsUrl" placeholder="wss://host/mcp/ws[/bot/<id>]" />
+        <div class="hint">Example: wss://mcp.piscinesondespro.fr/mcp/ws/bot/bot_mypiscine_fr</div>
+      </div>
+
+      <div class="row">
+        <div class="section grow">
+          <label for="token">Token (optional)</label>
+          <input id="token" placeholder="Paste access token if required" />
+          <div class="hint">App appends ?token=... to the URL if provided.</div>
+        </div>
+        <div class="section">
+          <label>&nbsp;</label>
+          <button id="connectBtn">Connect</button>
+          <button id="disconnectBtn" class="secondary">Disconnect</button>
+        </div>
+      </div>
+
+      <div class="row">
+        <button id="btnToolsList">Send tools/list</button>
+      </div>
+
+      <div class="section">
+        <div class="row">
+          <div class="grow">
+            <label for="method">Method</label>
+            <input id="method" value="tools/list" />
+          </div>
+          <div>
+            <label for="id">ID</label>
+            <input id="id" type="number" value="1" />
+          </div>
+        </div>
+        <label for="params">Params (JSON)</label>
+        <textarea id="params" rows="5" placeholder='{"name":"search_documents","arguments":{"query":"pump"}}'></textarea>
+        <div class="row">
+          <button id="sendBtn">Send JSON-RPC Request</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <label>Log</label>
+        <pre id="log" class="log"></pre>
+      </div>
+    </div>
+
+    <script src="renderer.js"></script>
+  </body>
+  </html>

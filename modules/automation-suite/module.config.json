@@ -1,0 +1,14 @@
+{
+  "name": "automation-suite",
+  "version": "1.0.0",
+  "enabled": true,
+  "hooks": {
+    "onModuleLoaded": "onModuleLoaded",
+    "onModuleDisabled": "onModuleDisabled"
+  },
+  "hasMcpTool": true,
+  "mcpTools": [
+    { "name": "automation_suite.vector_stores", "description": "List OpenAI vector stores configured via Automation Suite" },
+    { "name": "automation_suite.app_files", "description": "List local files from Automation Suite (backend/app_files)" }
+  ]
+}

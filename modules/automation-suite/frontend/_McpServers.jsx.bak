@@ -1,0 +1,1724 @@
+import React, { useEffect, useMemo, useState } from 'react';
+
+function Card({ title, children }) {
+  return (
+    <div className="p-3 border rounded bg-white">
+      <div className="font-medium mb-2">{title}</div>
+      {children}
+    </div>
+  );
+}
+
+function StatusRow({ label, value }) {
+  return (
+    <div className="text-sm flex items-center gap-2 mb-1">
+      <div className="text-gray-500 w-40">{label}</div>
+      <div className="font-mono text-gray-900 break-all">{value ?? '-'}</div>
+    </div>
+  );
+}
+
+export default function McpServers() {
+  // Shared prefs
+  const [adminMsg, setAdminMsg] = useState('');
+  const [adminToken, setAdminToken] = useState(() => { try { return localStorage.getItem('admin_token') || ''; } catch { return ''; } });
+
+  // MCP-DEV
+  const [dev, setDev] = useState(() => ({ httpBase: '', wsUrl: '', token: (()=>{ try { return localStorage.getItem('mcp_dev_token') || ''; } catch { return ''; } })() }));
+  const [devEnabled, setDevEnabled] = useState(true);
+  const [devEnableBusy, setDevEnableBusy] = useState(false);
+  const [devBase, setDevBase] = useState(() => { try { return localStorage.getItem('mcp_dev_base') || window.location.origin; } catch { return window.location.origin; } });
+  const [devBusy, setDevBusy] = useState(false);
+
+  // MCP-DEV-Prestashop
+  const [ps, setPs] = useState(() => ({ httpBase: '', wsUrl: '', token: (()=>{ try { return localStorage.getItem('mcp_dev_presta_token') || ''; } catch { return ''; } })() }));
+  const [psEnabled, setPsEnabled] = useState(true);
+  const [psEnableBusy, setPsEnableBusy] = useState(false);
+  const [psBase, setPsBase] = useState(() => { try { return localStorage.getItem('mcp_dev_presta_base') || window.location.origin; } catch { return window.location.origin; } });
+  const [psBusy, setPsBusy] = useState(false);
+  const [psAdminBusy, setPsAdminBusy] = useState(false);
+  const [psAdminMsg2, setPsAdminMsg2] = useState('');
+
+  // Tools (DEV)
+  const [devTools, setDevTools] = useState([]);
+  const [devToolName, setDevToolName] = useState('');
+  const [devToolArgs, setDevToolArgs] = useState('{}');
+  const [devToolOut, setDevToolOut] = useState('');
+  const [devToolBusy, setDevToolBusy] = useState(false);
+  const [devToolsMsg, setDevToolsMsg] = useState('');
+
+  // Tools (Presta)
+  const [psTools, setPsTools] = useState([]);
+  const [psToolName, setPsToolName] = useState('');
+  const [psToolArgs, setPsToolArgs] = useState('{}');
+  const [psToolOut, setPsToolOut] = useState('');
+  const [psToolBusy, setPsToolBusy] = useState(false);
+  const [psToolsMsg, setPsToolsMsg] = useState('');
+
+  // Stream tests
+  const [devTestBusy, setDevTestBusy] = useState(false);
+  const [devTestMsg, setDevTestMsg] = useState('');
+  const [psTestBusy, setPsTestBusy] = useState(false);
+  const [psTestMsg, setPsTestMsg] = useState('');
+
+  // Copy helper
+  const copy = async (text) => {
+    try { await navigator.clipboard.writeText(String(text||'')); } catch {}
+  };
+  const [sel, setSel] = useState('');
+  // Saved servers (DB-backed)
+  const [srvItems, setSrvItems] = useState([]);
+  const [srvBusy, setSrvBusy] = useState(false);
+  const [srvMsg, setSrvMsg] = useState('');
+  const [srvForm, setSrvForm] = useState({ id:'', name:'', kind:'', server_type:'', http_base:'', ws_url:'', stream_url:'', sse_url:'', token:'', enabled:false, notes:'', options:{} });
+  const [optText, setOptText] = useState('');
+  const [srvTestBusy, setSrvTestBusy] = useState(false);
+  const [srvTestMsg2, setSrvTestMsg2] = useState('');
+  const [grpItems, setGrpItems] = useState([]);
+  const [grpBusy, setGrpBusy] = useState(false);
+  // (Tool Access removed as requested)
+  // Tools (Saved server)
+  const [srvTools, setSrvTools] = useState([]);
+  const [srvToolName, setSrvToolName] = useState('');
+  const [srvToolArgs, setSrvToolArgs] = useState('');
+  const [srvToolOut, setSrvToolOut] = useState('');
+  const [srvToolBusy, setSrvToolBusy] = useState(false);
+  const [srvToolsMsg, setSrvToolsMsg] = useState('');
+  const [srvMenuOpenId, setSrvMenuOpenId] = useState('');
+  // Allowlist per server
+  const [srvAllowedNames, setSrvAllowedNames] = useState([]);
+  const [srvToolsFilter, setSrvToolsFilter] = useState('');
+  // Files (knowledge/vector + MCP uploads)
+  const [srvVecBusy, setSrvVecBusy] = useState(false);
+  const [srvVecMsg, setSrvVecMsg] = useState('');
+  const [srvVecFiles, setSrvVecFiles] = useState([]);
+  const [srvVecUseCache, setSrvVecUseCache] = useState(false);
+  const [srvVecImportOnLoad, setSrvVecImportOnLoad] = useState(false);
+  const [srvVecImportResults, setSrvVecImportResults] = useState([]); // [{ok, file_id, error, details}]
+  const syncLocalToMcp = async () => {
+    if (!srvForm?.id) return;
+    setSrvVecBusy(true); setSrvVecMsg('');
+    try {
+      const r = await fetch(`/api/mcp-servers/${encodeURIComponent(srvForm.id)}/local-sync`, { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify({ recursive: true }) });
+      const j = await r.json().catch(()=>({}));
+      if (!r.ok || j?.ok===false) setSrvVecMsg(j?.message||j?.error||'sync_failed');
+      else { setSrvVecMsg(`Local sync: copied ${j?.copied||0}, skipped ${j?.skipped||0}, errors ${j?.errors||0}`); await loadSrvUploads(); }
+    } catch (e) { setSrvVecMsg(String(e?.message||e)); }
+    finally { setSrvVecBusy(false); }
+  };
+
+  const resetAndSyncLocalToMcp = async () => {
+    if (!srvForm?.id) return;
+    if (!confirm('This will delete all files under the MCP uploads folder for this server and re-copy from the local root. Continue?')) return;
+    setSrvVecBusy(true); setSrvVecMsg('');
+    try {
+      const r = await fetch(`/api/mcp-servers/${encodeURIComponent(srvForm.id)}/local-sync`, { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify({ recursive: true, reset: true }) });
+      const j = await r.json().catch(()=>({}));
+      if (!r.ok || j?.ok===false) setSrvVecMsg(j?.message||j?.error||'reset_sync_failed');
+      else { setSrvVecMsg(`Reset & sync: copied ${j?.copied||0}, skipped ${j?.skipped||0}, errors ${j?.errors||0}`); await loadSrvUploads(); }
+    } catch (e) { setSrvVecMsg(String(e?.message||e)); }
+    finally { setSrvVecBusy(false); }
+  };
+
+  const copyListedLocalToMcp = async (reset=false) => {
+    if (!srvForm?.id) return;
+    const files = (srvVecFiles||[]).map(f => String(f.file_name||'').trim()).filter(Boolean);
+    if (!files.length) { setSrvVecMsg('No listed files to copy'); return; }
+    if (reset && !confirm('This will delete all files under the MCP uploads folder for this server and re-copy only the listed files. Continue?')) return;
+    setSrvVecBusy(true); setSrvVecMsg('');
+    try {
+      const body = { recursive: true, files, keep_names: true };
+      if (reset) body.reset = true;
+      const r = await fetch(`/api/mcp-servers/${encodeURIComponent(srvForm.id)}/local-sync`, { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify(body) });
+      const j = await r.json().catch(()=>({}));
+      if (!r.ok || j?.ok===false) setSrvVecMsg(j?.message||j?.error||'copy_listed_failed');
+      else { setSrvVecMsg(`${reset?'Reset & ':''}Copy listed: copied ${j?.copied||0}, skipped ${j?.skipped||0}, errors ${j?.errors||0}`); await loadSrvUploads(); }
+    } catch (e) { setSrvVecMsg(String(e?.message||e)); }
+    finally { setSrvVecBusy(false); }
+  };
+  const importVector = async (items) => {
+    if (!srvForm?.id || !items?.length) return;
+    setSrvVecBusy(true); setSrvVecMsg('');
+    try {
+      const r = await fetch(`/api/mcp-servers/${encodeURIComponent(srvForm.id)}/vector-files/import`, { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify({ items }) });
+      const j = await r.json().catch(()=>({}));
+      if (!r.ok || j?.ok===false) { setSrvVecMsg(j?.message||j?.error||'import_failed'); setSrvVecImportResults([]); return; }
+      const res = Array.isArray(j.results) ? j.results : [];
+      const ok = res.filter(x=>x && x.ok).length;
+      const fail = res.length - ok;
+      await loadSrvUploads();
+      setSrvVecMsg(`Imported ${ok}/${res.length}${fail?` (${fail} failed)`:''}`);
+      setSrvVecImportResults(res);
+    } catch (e) { setSrvVecMsg(String(e?.message||e)); }
+    finally { setSrvVecBusy(false); }
+  };
+  const [srvUpBusy, setSrvUpBusy] = useState(false);
+  const [srvUpMsg, setSrvUpMsg] = useState('');
+  const [srvUploads, setSrvUploads] = useState([]);
+  const [srvUpPath, setSrvUpPath] = useState('');
+  const [srvUpPathMsg, setSrvUpPathMsg] = useState('');
+  const [srvFolderList, setSrvFolderList] = useState([]);
+  const [srvFolderMsg, setSrvFolderMsg] = useState('');
+  // Stripe helpers state (for Path Builder)
+  const [stripePath, setStripePath] = useState('/v1/charges?limit=1');
+
+  // Build name-scoped stream URL for this server (respects server name; appends token if present)
+  const streamUrlForInspector = useMemo(() => {
+    try {
+      if (!srvForm?.name) return '';
+      let url = '';
+      if (srvForm.stream_url) url = String(srvForm.stream_url).trim();
+      if (!url) {
+        const base = String(srvForm.http_base || '').trim().replace(/\/$/, '');
+        const safeName = encodeURIComponent(String(srvForm.name || ''));
+        url = base ? `${base}/mcp/${safeName}/stream` : `/mcp/${safeName}/stream`;
+      }
+      if (srvForm.token) {
+        const sep = url.includes('?') ? '&' : '?';
+        url = `${url}${sep}token=${encodeURIComponent(srvForm.token)}`;
+      }
+      return url;
+    } catch { return ''; }
+  }, [srvForm.name, srvForm.http_base, srvForm.stream_url, srvForm.token]);
+  const KIND_OPTIONS = [
+    { value: 'main', label: 'Main (/mcp/*)' },
+    { value: 'dev', label: 'MCP‑DEV (/mcp-dev/*)' },
+    { value: 'dev-prestashop', label: 'MCP‑DEV‑Prestashop (/mcp-dev-prestashop/*)' },
+    { value: 'custom', label: 'Custom (manual URLs)' },
+  ];
+  const TYPE_OPTIONS = [
+    { value: '', label: '- None -' },
+    { value: 'database', label: 'Database tools' },
+    { value: 'files', label: 'File tools' },
+    { value: 'apis', label: 'APIs (HTTP)' },
+    { value: 'prestashop', label: 'APIs Prestashop' },
+    { value: 'stripe', label: 'Stripe API' },
+    { value: 'ai', label: 'AI tools (OpenAI-compatible)' },
+    { value: 'custom', label: 'Custom logic' },
+  ];
+  // Convenience: default per-type hints
+  const typeDefaults = {
+    stripe: { api_base_url: 'https://api.stripe.com' },
+  };
+  const buildStripeHeaders = () => {
+    const headers = {};
+    const sk = opt('secret_key');
+    const ver = opt('api_version');
+    const acct = opt('account');
+    if (sk) headers['Authorization'] = `Bearer ${sk}`;
+    if (ver) headers['Stripe-Version'] = ver;
+    if (acct) headers['Stripe-Account'] = acct;
+    return headers;
+  };
+
+  function deriveEndpoints(base, kind, name) {
+    try {
+      if (!base || !/^https?:\/\//i.test(base)) return {};
+      const u = new URL(base.replace(/\/$/, ''));
+      const wsScheme = u.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = u.host;
+      const httpBase = `${u.protocol}//${host}`;
+      const safeName = encodeURIComponent(String(name || '').trim() || 'default');
+      if (kind === 'dev') {
+        return { ws_url: `${wsScheme}//${host}/mcp-dev/ws`, stream_url: `${httpBase}/mcp/mcp-dev/stream`, sse_url: `${httpBase}/mcp-dev/events` };
+      }
+      if (kind === 'dev-prestashop') {
+        return { ws_url: `${wsScheme}//${host}/mcp-dev-prestashop/ws`, stream_url: `${httpBase}/mcp/mcp-dev-prestashop/stream`, sse_url: '' };
+      }
+      // Default/custom: name-scoped endpoints
+      return {
+        ws_url: `${wsScheme}//${host}/mcp/${safeName}/ws`,
+        stream_url: `${httpBase}/mcp/${safeName}/stream`,
+        sse_url: `${httpBase}/mcp/${safeName}/events`,
+      };
+    } catch { return {}; }
+  }
+
+  // Auto-fill endpoints when changing kind if base is set and target fields are empty
+  const autoFillEndpoints = (force=false) => {
+    const d = deriveEndpoints(srvForm.http_base, srvForm.kind, srvForm.name);
+    if (!Object.keys(d).length) return;
+    setSrvForm(f => ({
+      ...f,
+      ws_url: (force || !f.ws_url) ? (d.ws_url || f.ws_url) : f.ws_url,
+      stream_url: (force || !f.stream_url) ? (d.stream_url || f.stream_url) : f.stream_url,
+      sse_url: (force || !f.sse_url) ? (d.sse_url || f.sse_url) : f.sse_url,
+    }));
+  };
+
+  // Type-specific options helpers
+  const setOpt = (k, v) => setSrvForm(f => ({ ...f, options: { ...(f.options||{}), [k]: v } }));
+  const opt = (k) => ((srvForm.options || {})[k] ?? '');
+  const [dbTestBusy, setDbTestBusy] = useState(false);
+  const [dbTestMsg, setDbTestMsg] = useState('');
+  const testDb = async () => {
+    if (!srvForm?.id) return;
+    setDbTestBusy(true); setDbTestMsg('');
+    try {
+      const body = { options: srvForm.options || {} };
+      const r = await fetch(`/api/mcp-servers/${encodeURIComponent(srvForm.id)}/test-db`, { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify(body) });
+      const j = await r.json().catch(()=>({}));
+      if (r.ok && j?.ok) setDbTestMsg(`OK ${j.vendor||''} ${j.version||''} in ${j.ms||'?'}ms`);
+      else setDbTestMsg(`Failed: ${j?.message || j?.error || r.status}`);
+    } catch (e) { setDbTestMsg(String(e?.message || e)); }
+    finally { setDbTestBusy(false); }
+  };
+
+  const loadDev = async () => {
+    try {
+      setDevBusy(true);
+      const url = `${devBase.replace(/\/$/, '')}/mcp-dev/status`;
+      let creds = 'include';
+      try { const u = new URL(url, window.location.href); if (u.origin !== window.location.origin) creds = 'omit'; } catch {}
+      const r = await fetch(url, { credentials: creds });
+      const j = await r.json();
+      setDev({ httpBase: j?.httpBase || '', wsUrl: j?.wsUrl || '', token: j?.token || '' });
+      setDevEnabled(!!j?.enabled);
+      try { if (j?.token) localStorage.setItem('mcp_dev_token', j.token); } catch {}
+    } catch (e) {
+      setDev({ httpBase: '', wsUrl: '', token: '' });
+    } finally { setDevBusy(false); }
+  };
+
+  const loadPs = async () => {
+    try {
+      setPsBusy(true);
+      const url = `${psBase.replace(/\/$/, '')}/mcp/mcp-dev-prestashop/status`;
+      let creds = 'include';
+      try { const u = new URL(url, window.location.href); if (u.origin !== window.location.origin) creds = 'omit'; } catch {}
+      const r = await fetch(url, { credentials: creds });
+      const j = await r.json();
+      setPs({ httpBase: j?.httpBase || '', wsUrl: j?.wsUrl || '', token: j?.token || '' });
+      setPsEnabled(!!j?.enabled);
+      try { if (j?.token) localStorage.setItem('mcp_dev_presta_token', j.token); } catch {}
+    } catch (e) {
+      setPs({ httpBase: '', wsUrl: '', token: '' });
+    } finally { setPsBusy(false); }
+  };
+
+  const testStreamDev = async () => {
+    setDevTestBusy(true); setDevTestMsg('');
+    try {
+      const base = devBase.replace(/\/$/, '');
+      const q = dev.token ? `?token=${encodeURIComponent(dev.token)}` : '';
+      const url = `${base}/mcp/mcp-dev/stream${q}`;
+      const t0 = Date.now();
+      const r = await fetch(url, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ jsonrpc:'2.0', id:'t1', method:'initialize', params:{} }) });
+      const j = await r.json().catch(()=>({}));
+      const ms = Date.now() - t0;
+      if (r.ok && j?.result?.protocolVersion) setDevTestMsg(`OK (${j.result.protocolVersion}) in ${ms}ms`);
+      else setDevTestMsg(`Failed ${r.status}: ${j?.error?.message || 'invalid response'}`);
+    } catch (e) { setDevTestMsg(`Failed: ${String(e?.message||e)}`); } finally { setDevTestBusy(false); }
+  };
+
+  const testStreamPs = async () => {
+    setPsTestBusy(true); setPsTestMsg('');
+    try {
+      const base = psBase.replace(/\/$/, '');
+      const q = ps.token ? `?token=${encodeURIComponent(ps.token)}` : '';
+      const url = `${base}/mcp/mcp-dev-prestashop/stream${q}`;
+      const t0 = Date.now();
+      const r = await fetch(url, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ jsonrpc:'2.0', id:'t1', method:'initialize', params:{} }) });
+      const j = await r.json().catch(()=>({}));
+      const ms = Date.now() - t0;
+      if (r.ok && j?.result?.protocolVersion) setPsTestMsg(`OK (${j.result.protocolVersion}) in ${ms}ms`);
+      else setPsTestMsg(`Failed ${r.status}: ${j?.error?.message || 'invalid response'}`);
+    } catch (e) { setPsTestMsg(`Failed: ${String(e?.message||e)}`); } finally { setPsTestBusy(false); }
+  };
+
+  // Saved servers (DB CRUD)
+  const loadServers = async () => {
+    setSrvBusy(true); setSrvMsg('');
+    try {
+      const r = await fetch('/api/mcp-servers', { credentials:'include' });
+      const j = await r.json();
+      if (r.ok && j?.ok) setSrvItems(Array.isArray(j.items)? j.items: []);
+      else setSrvMsg(j?.message || j?.error || 'load_failed');
+    } catch (e) { setSrvMsg(String(e?.message || e)); } finally { setSrvBusy(false); }
+  };
+  const loadGroups = async () => {
+    setGrpBusy(true);
+    try { const r = await fetch('/api/mcp-groups', { credentials:'include' }); const j = await r.json(); if (r.ok && j?.ok) setGrpItems(Array.isArray(j.items)? j.items: []); }
+    catch {}
+    finally { setGrpBusy(false); }
+  };
+  const pickServer = async (id) => {
+    setSel(id); setSrvMsg('');
+    try {
+      const r = await fetch(`/api/mcp-servers/${encodeURIComponent(id)}`, { credentials:'include' });
+      const j = await r.json();
+      if (r.ok && j?.ok) {
+        const it = j.item || {};
+        setSrvForm({ ...it, options: (it.options && typeof it.options === 'object') ? it.options : {} });
+        try { setOptText(JSON.stringify((it.options && typeof it.options==='object') ? it.options : (typeof it.options==='string' ? JSON.parse(it.options) : {}), null, 2)); } catch { setOptText('{}'); }
+        // Prime allowed tools selection from saved options
+        try {
+          const arr = (it.options && Array.isArray(it.options.allowed_tools)) ? it.options.allowed_tools : [];
+          setSrvAllowedNames(arr);
+        } catch {}
+      } else setSrvMsg(j?.message || j?.error || 'load_failed');
+    } catch (e) { setSrvMsg(String(e?.message || e)); }
+  };
+  const addServer = async () => {
+    const name = prompt('MCP server name'); if (!name) return;
+    const groupName = prompt('Group (optional): enter a new group name or leave blank to skip');
+    setSrvBusy(true); setSrvMsg('');
+    try {
+      // Create with base name; server will auto-label when server_type is later set and saved
+      const body = { name, enabled:false, options:{ name_base: name } };
+      if (groupName && groupName.trim()) body.group_name = groupName.trim();
+      const r = await fetch('/api/mcp-servers', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify(body) });
+      const j = await r.json();
+      if (r.ok && j?.ok) { await loadServers(); pickServer(j.item.id); } else setSrvMsg(j?.message || j?.error || 'create_failed');
+    } catch (e) { setSrvMsg(String(e?.message || e)); } finally { setSrvBusy(false); }
+  };
+  const saveServer = async () => {
+    if (!srvForm?.id) return;
+    setSrvBusy(true); setSrvMsg('');
+    // Auto-fill endpoints based on name + base
+    const derived = deriveEndpoints(srvForm.http_base, srvForm.kind, srvForm.name);
+    const body = {
+      name: srvForm.name,
+      kind: srvForm.kind,
+      group_id: srvForm.group_id || '',
+      server_type: srvForm.server_type,
+      http_base: srvForm.http_base,
+      ws_url: derived.ws_url || srvForm.ws_url || '',
+      stream_url: derived.stream_url || srvForm.stream_url || '',
+      sse_url: derived.sse_url || srvForm.sse_url || '',
+      token: srvForm.token,
+      enabled: !!srvForm.enabled,
+      notes: srvForm.notes,
+      options: srvForm.options || {},
+      // auto_label removed to keep server name stable across saves
+    };
+    try {
+      const r = await fetch(`/api/mcp-servers/${encodeURIComponent(srvForm.id)}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify(body) });
+      const j = await r.json();
+      if (r.ok && j?.ok) { setSrvMsg('Saved'); loadServers(); } else setSrvMsg(j?.message || j?.error || 'save_failed');
+    } catch (e) { setSrvMsg(String(e?.message || e)); } finally { setSrvBusy(false); }
+  };
+
+  const saveAllowedTools = async () => {
+    if (!srvForm?.id) return;
+    try {
+      // Merge allowlist into options then save
+      const opts = { ...(srvForm.options || {}) };
+      opts.allowed_tools = Array.from(new Set((srvAllowedNames || []).map(String).filter(Boolean)));
+      setSrvForm(f => ({ ...f, options: opts }));
+      await saveServer();
+    } catch (e) { setSrvMsg(String(e?.message || e)); }
+  };
+
+  const createGroup = async () => {
+    const name = prompt('New group name'); if (!name) return;
+    try { const r = await fetch('/api/mcp-groups', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify({ name }) }); const j = await r.json(); if (r.ok && j?.ok) { await loadGroups(); setSrvForm(f=>({ ...f, group_id: j.item.id })); } }
+    catch {}
+  };
+  const deleteServer = async () => {
+    if (!srvForm?.id) return; if (!confirm('Delete this server configuration?')) return;
+    setSrvBusy(true); setSrvMsg('');
+    try {
+      const r = await fetch(`/api/mcp-servers/${encodeURIComponent(srvForm.id)}`, { method:'DELETE', credentials:'include' });
+      const j = await r.json().catch(()=>({}));
+      if (r.ok && j?.ok) { setSrvMsg('Deleted'); setSel('dev'); setSrvForm({}); loadServers(); }
+      else setSrvMsg(j?.message || j?.error || 'delete_failed');
+    } catch (e) { setSrvMsg(String(e?.message || e)); } finally { setSrvBusy(false); }
+  };
+  const deleteServerById = async (id) => {
+    if (!id) return; if (!confirm('Delete this server configuration?')) return;
+    setSrvBusy(true); setSrvMsg('');
+    try {
+      const r = await fetch(`/api/mcp-servers/${encodeURIComponent(id)}`, { method:'DELETE', credentials:'include' });
+      const j = await r.json().catch(()=>({}));
+      if (r.ok && j?.ok) { setSrvMsg('Deleted'); if (sel===id) { setSel('dev'); setSrvForm({}); } await loadServers(); }
+      else setSrvMsg(j?.message || j?.error || 'delete_failed');
+    } catch (e) { setSrvMsg(String(e?.message || e)); } finally { setSrvBusy(false); }
+  };
+  const markServTested = async (id) => {
+    try {
+      const it = (srvItems||[]).find(x => x && x.id === id);
+      if (!it) return;
+      let opts = it.options;
+      try { if (typeof opts === 'string') opts = JSON.parse(opts); } catch { opts = {}; }
+      opts = { ...(opts||{}), tested_at: new Date().toISOString() };
+      await fetch(`/api/mcp-servers/${encodeURIComponent(id)}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify({ options: opts }) });
+      await loadServers();
+    } catch {}
+  };
+
+  const loadSrvVectorFiles = async () => {
+    if (!srvForm?.id) return;
+    setSrvVecBusy(true); setSrvVecMsg(''); setSrvVecFiles([]);
+    try {
+      // Load vector store files linked by prompts that reference this server
+      const source = srvVecUseCache ? 'cached' : 'live';
+      const r = await fetch(`/api/mcp-servers/${encodeURIComponent(srvForm.id)}/vector-files?source=${encodeURIComponent(source)}`, { credentials:'include' });
+      const j = await r.json().catch(()=>({}));
+      if (!r.ok || j?.ok === false) { setSrvVecMsg(j?.message || j?.error || 'load_failed'); setSrvVecFiles([]); return; }
+      const rows = Array.isArray(j.files) ? j.files : [];
+      setSrvVecFiles(rows);
+    } catch (e) { setSrvVecMsg(String(e?.message||e)); }
+    finally { setSrvVecBusy(false); }
+  };
+
+  const loadSrvUploads = async () => {
+    if (!srvForm?.id) return;
+    setSrvUpBusy(true); setSrvUpMsg(''); setSrvUploads([]);
+    try {
+      const r = await fetch(`/api/mcp-servers/${encodeURIComponent(srvForm.id)}/uploads?limit=100&verify=1`, { credentials:'include' });
+      const j = await r.json().catch(()=>({}));
+      if (r.ok && j?.ok) {
+        let rows = Array.isArray(j.files)? j.files: [];
+        if (!rows.length) {
+          // Fallback: ask server via MCP stream list_files
+          try {
+            const base = String(srvForm.http_base || '').trim().replace(/\/$/, '');
+            const qp = srvForm.token ? `?token=${encodeURIComponent(srvForm.token)}` : '';
+            const url = `${base ? base : ''}/mcp/${encodeURIComponent(srvForm.name)}/stream${qp}`.replace(/^[/]+/,'/');
+            const body = { jsonrpc:'2.0', id:'ui_list_files', method:'tools/call', params:{ name:'list_files', arguments:{} } };
+            let creds = 'include';
+            try { const u = new URL(url, window.location.href); if (u.origin !== window.location.origin) creds = 'omit'; } catch {}
+            const r2 = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, credentials:creds, body: JSON.stringify(body) });
+            const j2 = await r2.json().catch(()=>({}));
+            const text = j2?.result?.content?.[0]?.text || '';
+            const arr = text ? JSON.parse(text) : [];
+            if (Array.isArray(arr) && arr.length) rows = arr;
+          } catch {}
+        }
+        setSrvUploads(rows);
+      } else setSrvUpMsg(j?.message || j?.error || 'load_failed');
+    } catch (e) { setSrvUpMsg(String(e?.message||e)); }
+    finally { setSrvUpBusy(false); }
+  };
+
+  const loadSrvUploadPath = async () => {
+    if (!srvForm?.id) return;
+    setSrvUpPathMsg(''); setSrvUpPath('');
+    try {
+      const r = await fetch(`/api/mcp-servers/${encodeURIComponent(srvForm.id)}/uploads/path`, { credentials:'include' });
+      const j = await r.json().catch(()=>({}));
+      if (r.ok && j?.ok) setSrvUpPath(String(j.path||''));
+      else setSrvUpPathMsg(j?.message || j?.error || 'load_failed');
+    } catch (e) { setSrvUpPathMsg(String(e?.message||e)); }
+  };
+
+  const loadSrvFolder = async () => {
+    if (!srvForm?.id) return;
+    setSrvFolderMsg(''); setSrvFolderList([]);
+    try {
+      const r = await fetch(`/api/mcp-servers/${encodeURIComponent(srvForm.id)}/uploads/folder`, { credentials:'include' });
+      const j = await r.json().catch(()=>({}));
+      if (r.ok && j?.ok) setSrvFolderList(Array.isArray(j.entries)? j.entries: []);
+      else setSrvFolderMsg(j?.message || j?.error || 'load_failed');
+    } catch (e) { setSrvFolderMsg(String(e?.message||e)); }
+  };
+
+  const uploadSrvTestFile = async () => {
+    try {
+      if (!srvForm?.name) { setSrvUpMsg('Missing server name'); return; }
+      setSrvUpBusy(true); setSrvUpMsg('');
+      // Use name-scoped MCP stream + upload_file tool to ensure correct server scoping
+      const base = String(srvForm.http_base || '').trim().replace(/\/$/, '');
+      const qp = srvForm.token ? `?token=${encodeURIComponent(srvForm.token)}` : '';
+      const url = `${base ? base : ''}/mcp/${encodeURIComponent(srvForm.name)}/stream${qp}`.replace(/^[/]+/,'/');
+      const content = `Test upload from UI for ${srvForm.name} at ${new Date().toISOString()}\n`;
+      const b64 = btoa(unescape(encodeURIComponent(content)));
+      let creds = 'include';
+      try { const u = new URL(url, window.location.href); if (u.origin !== window.location.origin) creds = 'omit'; } catch {}
+      const body = { jsonrpc:'2.0', id:'ui_test_upload', method:'tools/call', params:{ name:'upload_file', arguments:{ filename:'ui_test.txt', content_base64:b64, content_type:'text/plain' } } };
+      let r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, credentials:creds, body: JSON.stringify(body) });
+      let j = await r.json().catch(()=>({}));
+      if (!r.ok || j?.error) {
+        // Fallback: direct base64 upload endpoint with token (maps token->server_name)
+        const base2 = String(srvForm.http_base || '').trim().replace(/\/$/, '');
+        const url2 = `${base2 ? base2 : ''}/mcp/files/base64${srvForm.token?`?token=${encodeURIComponent(srvForm.token)}`:''}`.replace(/^[/]+/,'/');
+        const r2 = await fetch(url2, { method:'POST', headers:{'Content-Type':'application/json'}, credentials:creds, body: JSON.stringify({ filename:'ui_test.txt', content_base64:b64, content_type:'text/plain' }) });
+        const j2 = await r2.json().catch(()=>({}));
+        if (!r2.ok || j2?.ok===false) { setSrvUpMsg((j?.error && j.error.message) || j2?.message || j2?.error || 'upload_failed'); return; }
+      }
+      await loadSrvUploads();
+    } catch (e) { setSrvUpMsg(String(e?.message||e)); }
+    finally { setSrvUpBusy(false); }
+  };
+  const markServUntested = async (id) => {
+    try {
+      const it = (srvItems||[]).find(x => x && x.id === id);
+      if (!it) return;
+      let opts = it.options;
+      try { if (typeof opts === 'string') opts = JSON.parse(opts); } catch { opts = {}; }
+      try { delete opts.tested_at; } catch {}
+      await fetch(`/api/mcp-servers/${encodeURIComponent(id)}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify({ options: opts }) });
+      await loadServers();
+    } catch {}
+  };
+  const testServer = async () => {
+    setSrvTestBusy(true); setSrvTestMsg2('');
+    try {
+      const base = String(srvForm.http_base || '').replace(/\/$/, '');
+      let url = String(srvForm.stream_url || '').trim();
+      if (!url && base) url = `${base}/mcp/stream`;
+      if (!url) { setSrvTestMsg2('No stream_url/http_base'); return; }
+      const qp = srvForm.token ? (url.includes('?') ? '&' : '?') + `token=${encodeURIComponent(srvForm.token)}` : '';
+      const u = url + qp;
+      const headers = { 'Content-Type': 'application/json' };
+      let creds = 'include';
+      try { const t = new URL(u, window.location.href); if (t.origin !== window.location.origin) creds = 'omit'; } catch {}
+      const t0 = Date.now();
+      const r = await fetch(u, { method:'POST', headers, credentials:creds, body: JSON.stringify({ jsonrpc:'2.0', id:'t1', method:'initialize', params:{} }) });
+      const j = await r.json().catch(()=>({}));
+      const ms = Date.now() - t0;
+      if (r.ok && j?.result?.protocolVersion) setSrvTestMsg2(`OK (${j.result.protocolVersion}) in ${ms}ms`);
+      else setSrvTestMsg2(`Failed ${r.status}: ${j?.error?.message || 'invalid response'}`);
+    } catch (e) { setSrvTestMsg2(String(e?.message || e)); } finally { setSrvTestBusy(false); }
+  };
+
+  const loadSrvTools = async () => {
+    try {
+      if (!srvForm?.name) { setSrvToolsMsg('Missing server name'); return; }
+      setSrvToolsMsg(''); setSrvToolOut('');
+      const name = encodeURIComponent(srvForm.name);
+      const qp = srvForm.token ? `?token=${encodeURIComponent(srvForm.token)}` : '';
+      const url = `/mcp/${name}/stream${qp}`;
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ jsonrpc: '2.0', id: 'tools_list', method: 'tools/list', params: {} }),
+      });
+      const j = await r.json().catch(()=>({}));
+      const list = j?.result?.tools || [];
+      const sorted = Array.isArray(list) ? list.slice().sort((a,b)=>String(a?.name||'').localeCompare(String(b?.name||''))) : [];
+      setSrvTools(sorted);
+      if (Array.isArray(list) && list.length) {
+        const first = list[0];
+        setSrvToolName(first?.name || '');
+        try {
+          const sch = first?.inputSchema || first?.input_schema;
+          if (sch && sch.type === 'object' && sch.properties) {
+            const sample = {};
+            for (const [k, v] of Object.entries(sch.properties)) {
+              const t = String(v?.type || 'string');
+              sample[k] = t === 'number' || t === 'integer' ? 0 : (t === 'boolean' ? false : '');
+            }
+            setSrvToolArgs(JSON.stringify(sample, null, 2));
+          } else setSrvToolArgs('{}');
+        } catch { setSrvToolArgs('{}'); }
+        setSrvToolsMsg(`Loaded ${list.length} tools.`);
+      } else {
+        setSrvToolName('');
+        setSrvToolArgs('');
+        setSrvToolsMsg(j?.error?.message || 'No tools available');
+      }
+    } catch (e) {
+      setSrvToolsMsg(String(e?.message || e));
+    }
+  };
+  const callSrvTool = async () => {
+    try {
+      if (!srvForm?.name || !srvToolName) return;
+      setSrvToolBusy(true); setSrvToolOut('');
+      const name = encodeURIComponent(srvForm.name);
+      const qp = srvForm.token ? `?token=${encodeURIComponent(srvForm.token)}` : '';
+      const url = `/mcp/${name}/stream${qp}`;
+      let args = {};
+      try { args = srvToolArgs ? JSON.parse(srvToolArgs) : {}; } catch { args = {}; }
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ jsonrpc: '2.0', id: 'tools_call', method: 'tools/call', params: { name: srvToolName, arguments: args } }),
+      });
+      const ct = r.headers.get('content-type') || '';
+      const out = /application\/json/i.test(ct) ? JSON.stringify(await r.json(), null, 2) : await r.text();
+      setSrvToolOut(out);
+    } catch (e) {
+      setSrvToolOut(String(e?.message || e));
+    } finally {
+      setSrvToolBusy(false);
+    }
+  };
+
+  // Load all built-in tools (admin endpoint, unfiltered by server allowlist)
+  const loadAllToolsAdmin = async () => {
+    try {
+      setSrvToolsMsg('');
+      const r = await fetch('/api/admin/mcp/tools', { credentials:'include' });
+      const j = await r.json();
+      if (r.ok && j?.ok) {
+        const list = Array.isArray(j.tools) ? j.tools : [];
+        // Merge with any currently loaded tools, de-duplicate by name
+        const byName = new Map();
+        (srvTools || []).forEach(t => { if (t?.name) byName.set(t.name, t); });
+        list.forEach(t => { if (t?.name && !byName.has(t.name)) byName.set(t.name, t); });
+        setSrvTools(Array.from(byName.values()));
+        setSrvToolsMsg(`Loaded ${list.length} built-in tools.`);
+      } else {
+        setSrvToolsMsg(j?.message || j?.error || 'load_failed');
+      }
+    } catch (e) {
+      setSrvToolsMsg(String(e?.message || e));
+    }
+  };
+
+  useEffect(() => { loadDev(); }, []);
+  useEffect(() => { loadPs(); }, []);
+  useEffect(() => { loadServers(); loadGroups(); }, []);
+
+  const savePsPublicBase = async () => {
+    try {
+      setPsAdminBusy(true); setAdminMsg('');
+      const headers = { 'Content-Type':'application/json' };
+      if (adminToken) headers['X-Admin-Token'] = adminToken;
+      const r = await fetch('/api/admin/mcp-dev-prestashop/public-base', { method:'POST', headers, credentials:'include', body: JSON.stringify({ value: psBase }) });
+      const j = await r.json();
+      setAdminMsg(r.ok && j?.ok ? 'Saved Presta public base.' : (j?.error || 'Save failed'));
+    } catch (e) { setAdminMsg(String(e?.message || e)); } finally { setPsAdminBusy(false); }
+  };
+  const regenPsToken = async () => {
+    try {
+      setPsAdminBusy(true); setAdminMsg('');
+      const headers = {};
+      if (adminToken) headers['X-Admin-Token'] = adminToken;
+      const r = await fetch('/api/admin/mcp-dev-prestashop/token/regenerate', { method:'POST', headers, credentials:'include' });
+      const j = await r.json();
+      if (r.ok && j?.ok) { setPs((s)=>({ ...s, token: j.token })); setAdminMsg('Token regenerated.'); }
+      else setAdminMsg(j?.error || 'Action failed');
+    } catch (e) { setAdminMsg(String(e?.message || e)); } finally { setPsAdminBusy(false); }
+  };
+  const disablePsToken = async () => {
+    try {
+      setPsAdminBusy(true); setAdminMsg('');
+      const headers = {};
+      if (adminToken) headers['X-Admin-Token'] = adminToken;
+      const r = await fetch('/api/admin/mcp-dev-prestashop/token/disable', { method:'POST', headers, credentials:'include' });
+      const j = await r.json();
+      if (r.ok && j?.ok) { setPs((s)=>({ ...s, token: '' })); setAdminMsg('Token disabled.'); }
+      else setAdminMsg(j?.error || 'Action failed');
+    } catch (e) { setAdminMsg(String(e?.message || e)); } finally { setPsAdminBusy(false); }
+  };
+
+  // Admin: fetch tokens explicitly
+  const fetchDevToken = async () => {
+    try { setAdminMsg(''); const headers = {}; if (adminToken) headers['X-Admin-Token'] = adminToken; const r = await fetch('/api/admin/mcp-dev/token', { credentials:'include', headers }); const j = await r.json(); if (r.ok && j?.ok != null) { setDev((s)=>({ ...s, token: j.token || '' })); try{ localStorage.setItem('mcp_dev_token', j.token||''); } catch {} } else setAdminMsg(j?.error || 'cannot fetch token'); } catch (e) { setAdminMsg(String(e?.message||e)); }
+  };
+  const regenDevToken = async () => {
+    try { setAdminMsg(''); const headers = {}; if (adminToken) headers['X-Admin-Token'] = adminToken; const r = await fetch('/api/admin/mcp-dev/token/regenerate', { method:'POST', credentials:'include', headers }); const j = await r.json(); if (r.ok && j?.ok) { setDev((s)=>({ ...s, token: j.token })); setAdminMsg('Token regenerated.'); try { localStorage.setItem('mcp_dev_token', j.token||''); } catch {} } else setAdminMsg(j?.error || 'action failed'); } catch (e) { setAdminMsg(String(e?.message||e)); }
+  };
+  const disableDevToken = async () => {
+    try { setAdminMsg(''); const headers = {}; if (adminToken) headers['X-Admin-Token'] = adminToken; const r = await fetch('/api/admin/mcp-dev/token/disable', { method:'POST', credentials:'include', headers }); const j = await r.json(); if (r.ok && j?.ok) { setDev((s)=>({ ...s, token: '' })); setAdminMsg('Token disabled.'); try { localStorage.setItem('mcp_dev_token', ''); } catch {} } else setAdminMsg(j?.error || 'action failed'); } catch (e) { setAdminMsg(String(e?.message||e)); }
+  };
+  const saveDevPublicBase = async () => {
+    try { setAdminMsg(''); const headers = { 'Content-Type':'application/json' }; if (adminToken) headers['X-Admin-Token'] = adminToken; const r = await fetch('/api/admin/mcp-dev/public-base', { method:'POST', headers, credentials:'include', body: JSON.stringify({ value: devBase }) }); const j = await r.json(); setAdminMsg(r.ok && j?.ok ? 'Saved DEV public base.' : (j?.error || 'Save failed')); } catch (e) { setAdminMsg(String(e?.message||e)); }
+  };
+
+  // Tools loaders
+  const loadDevTools = async () => {
+    try {
+      const base = devBase.replace(/\/$/, '');
+      const q = dev.token ? `?token=${encodeURIComponent(dev.token)}` : '';
+      const url = `${base}/mcp-dev/actions/tools${q}`;
+      let creds = 'include';
+      try { const u = new URL(url, window.location.href); if (u.origin !== window.location.origin) creds = 'omit'; } catch {}
+      const r = await fetch(url, { credentials: creds });
+      const j = await r.json().catch(()=>({ ok:false, error:'invalid_json' }));
+      const list = Array.isArray(j?.tools) ? j.tools : [];
+      setDevTools(list);
+      if (list.length) { setDevToolName((name) => name || list[0].name); setDevToolsMsg(`Loaded ${list.length} tools.`); }
+      else { setDevToolsMsg(j?.error || `No tools or unauthorized (${r.status})`); }
+    } catch {}
+  };
+  const callDevTool = async () => {
+    try {
+      setDevToolBusy(true); setDevToolOut('');
+      const base = devBase.replace(/\/$/, '');
+      const q = dev.token ? `?token=${encodeURIComponent(dev.token)}` : '';
+      const url = `${base}/mcp-dev/actions/tools/call${q}`;
+      const args = (()=>{ try { return JSON.parse(devToolArgs||'{}'); } catch { return {}; } })();
+      let creds = 'include';
+      try { const u = new URL(url, window.location.href); if (u.origin !== window.location.origin) creds = 'omit'; } catch {}
+      const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, credentials:creds, body: JSON.stringify({ name: devToolName, arguments: args }) });
+      const j = await r.json();
+      setDevToolOut(JSON.stringify(j, null, 2));
+    } catch (e) { setDevToolOut(String(e?.message || e)); } finally { setDevToolBusy(false); }
+  };
+
+  const loadPsTools = async () => {
+    try {
+      const base = psBase.replace(/\/$/, '');
+      const url = `${base}/mcp/mcp-dev-prestashop/actions/tools`;
+      let creds = 'include';
+      try { const u = new URL(url, window.location.href); if (u.origin !== window.location.origin) creds = 'omit'; } catch {}
+      const r = await fetch(url, { credentials: creds });
+      const j = await r.json().catch(()=>({ ok:false, error:'invalid_json' }));
+      const list = Array.isArray(j?.tools) ? j.tools : [];
+      setPsTools(list);
+      if (list.length) { setPsToolName((name) => name || list[0].name); setPsToolsMsg(`Loaded ${list.length} tools.`); }
+      else { setPsToolsMsg(j?.error || `No tools (${r.status})`); }
+    } catch {}
+  };
+  const callPsTool = async () => {
+    try {
+      setPsToolBusy(true); setPsToolOut(''); setPsAdminMsg2('');
+      const base = psBase.replace(/\/$/, '');
+      const url = `${base}/mcp/mcp-dev-prestashop/actions/tools/call`;
+      const args = (()=>{ try { return JSON.parse(psToolArgs||'{}'); } catch { return {}; } })();
+      let creds = 'include';
+      try { const u = new URL(url, window.location.href); if (u.origin !== window.location.origin) creds = 'omit'; } catch {}
+      const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, credentials:creds, body: JSON.stringify({ name: psToolName, arguments: args }) });
+      const j = await r.json();
+      setPsToolOut(JSON.stringify(j, null, 2));
+      if (!r.ok || j?.ok === false) setPsAdminMsg2(j?.message || j?.error || 'Call failed');
+    } catch (e) { setPsToolOut(String(e?.message || e)); } finally { setPsToolBusy(false); }
+  };
+
+  useEffect(() => { loadDev(); loadPs(); loadServers(); }, []);
+
+  return (
+    <div className="h-full w-full flex min-h-0">
+      {/* Left: list */}
+      <aside className="w-72 border-r bg-white p-3 flex flex-col relative z-10">
+        <div className="text-sm font-semibold mb-2">MCP Servers</div>
+        <div className="flex-1 overflow-y-auto scroll-area">
+          {/* DEV presets removed per request */}
+          <div className="text-xs uppercase tracking-wide text-gray-400 mt-4 mb-1">Saved</div>
+          <div className="mb-2 relative">
+            <CreateServerButton
+              disabled={srvBusy}
+              groups={grpItems}
+              onCreated={async(id)=>{ await loadServers(); if (id) pickServer(id); }}
+              onGroupsRefresh={loadGroups}
+            />
+          </div>
+          {false && (srvItems||[]).map(it => (
+            <div key={it.id} className={`flex items-center gap-2 px-2 py-1 rounded mb-1 hover:bg-gray-50 ${sel===it.id?'bg-blue-50':''}`}>
+              <button onClick={()=>pickServer(it.id)} className="flex-1 text-left">
+                <div className="font-medium text-sm">{it.name || it.id}</div>
+                <div className="text-[11px] text-gray-500">{it.kind || 'custom'} {it.enabled ? '• Enabled' : ''}</div>
+              </button>
+              <button className="text-[11px] px-1.5 py-0.5 border rounded" onClick={()=>deleteServerById(it.id)} title="Delete">Del</button>
+            </div>
+          ))}
+
+          {(() => {
+            try {
+              const groupsById = new Map((grpItems||[]).map(g => [g.id, g.name]));
+              const byGroup = new Map();
+              for (const it of (srvItems||[])) {
+                const gid = it.group_id || '';
+                const arr = byGroup.get(gid) || [];
+                arr.push(it);
+                byGroup.set(gid, arr);
+              }
+              const blocks = [];
+              for (const [gid, arr] of byGroup.entries()) {
+                const label = gid ? (groupsById.get(gid) || gid) : 'Ungrouped';
+                const sorted = arr.slice().sort((a,b)=> new Date(b.updated_at||0) - new Date(a.updated_at||0));
+                const maxUpdated = sorted.length ? sorted[0].updated_at : null;
+                blocks.push({ gid, label, items: sorted, maxUpdated });
+              }
+              blocks.sort((a,b)=> new Date(b.maxUpdated||0) - new Date(a.maxUpdated||0));
+              const renderPrefPill = (it) => {
+                let pref = 'stream';
+                try { let opts = it.options; if (typeof opts === 'string') opts = JSON.parse(opts); if (opts && typeof opts==='object' && opts.server_url_pref==='sse') pref='sse'; } catch {}
+                return (
+                  <span className={`px-1.5 py-0.5 rounded text-[10px] border ${pref==='stream'?'bg-blue-50 border-blue-200 text-blue-700':'bg-amber-50 border-amber-200 text-amber-700'}`}>
+                    {pref==='stream' ? 'Streamable HTTP' : 'SSE'}
+                  </span>
+                );
+              };
+              const renderTested = (it) => {
+                let testedAt = '';
+                try { let opts = it.options; if (typeof opts === 'string') opts = JSON.parse(opts); testedAt = opts?.tested_at || ''; } catch {}
+                const text = testedAt ? `Tested ${new Date(testedAt).toLocaleString()}` : 'Not tested';
+                return <span className="text-[10px] text-gray-500 whitespace-nowrap">{text}</span>;
+              };
+              return blocks.map(block => (
+                <div key={block.gid || 'ungrouped'} className="mb-2">
+                  <div className="text-[11px] uppercase tracking-wide text-gray-400 mb-1 flex items-center justify-between">
+                    <span>{block.label}</span>
+                    {block.maxUpdated && (<span className="text-gray-300">{new Date(block.maxUpdated).toLocaleDateString()}</span>)}
+                  </div>
+                  {block.items.map(it => (
+                    <div key={it.id} className={`flex flex-col rounded mb-1 border border-transparent hover:border-gray-200 ${sel===it.id?'bg-blue-50/60':''}`}>
+                      <div className="flex items-center gap-2 px-2 py-1">
+                        <button className="text-[12px] px-2 py-0.5 border rounded shrink-0" title="Menu" onClick={(e)=>{ e.stopPropagation(); setSrvMenuOpenId(srvMenuOpenId===it.id?'':it.id); }}>⋯</button>
+                        <button onClick={()=>pickServer(it.id)} className="flex-1 min-w-0 text-left">
+                          <div className="font-medium text-sm truncate">{it.name || it.id}</div>
+                          <div className="text-[11px] text-gray-500 flex items-center gap-2 flex-wrap">
+                            <span>{(it.kind || it.server_type || 'custom')}</span>
+                            {it.enabled ? <span className="text-green-700">Enabled</span> : null}
+                            {renderPrefPill(it)}
+                          </div>
+                          <div className="text-[11px] text-gray-500 mt-0.5 flex justify-end pr-1 w-full">{renderTested(it)}</div>
+                        </button>
+                      </div>
+                      {srvMenuOpenId===it.id && (
+                        <div className="px-2 pb-2 bg-white z-20">
+                          <div className="flex flex-wrap items-center gap-2">
+                            {(() => { let has=false; try { let o = it.options; if (typeof o==='string') o=JSON.parse(o); has=!!o?.tested_at; } catch {} ; return has ? (
+                              <button className="text-[11px] px-2 py-0.5 border rounded" onClick={()=>{ setSrvMenuOpenId(''); markServUntested(it.id); }}>Unmark tested</button>
+                            ) : (
+                              <button className="text-[11px] px-2 py-0.5 border rounded" onClick={()=>{ setSrvMenuOpenId(''); markServTested(it.id); }}>Mark as tested</button>
+                            ); })()}
+                            <button className="text-[11px] px-2 py-0.5 border rounded text-red-600" onClick={()=>{ setSrvMenuOpenId(''); deleteServerById(it.id); }}>Delete</button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ));
+            } catch { return null; }
+          })()}
+
+          {srvMsg && <div className="text-[11px] text-gray-600 mt-1">{srvMsg}</div>}
+        </div>
+      </aside>
+
+      {/* Right: content */}
+      <main className="flex-1 p-4 min-h-0 overflow-y-auto scroll-area">
+        <div className="space-y-4 max-w-5xl">
+          <div className="flex items-center justify-between">
+            <div className="text-lg font-semibold">{srvForm?.name || 'MCP Server'}</div>
+            <div className="flex items-center gap-2">
+              <button className="text-xs px-2 py-1 rounded border" onClick={()=>{ loadServers(); if (srvForm?.id) pickServer(srvForm.id); }} disabled={srvBusy}>{srvBusy?'Loading…':'Refresh'}</button>
+            </div>
+          </div>
+
+          {false && sel==='dev' && (
+          <Card title={`Settings & Status ${devEnabled && dev.wsUrl ? '• ONLINE' : '• OFFLINE'}`}>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <div className="text-xs mb-1">Admin token (optional header)</div>
+            <div className="flex gap-2 items-center mb-2">
+              <input className="border rounded px-2 py-1 w-full" value={adminToken} onChange={(e)=>{ const v=e.target.value; setAdminToken(v); try { localStorage.setItem('admin_token', v); } catch {} }} placeholder="Paste ADMIN_TOKEN if cookies aren’t used" />
+              <button className="px-2 py-1 rounded border" onClick={()=>{ try { localStorage.setItem('admin_token', adminToken||''); } catch {} setAdminMsg('Admin token saved (local)'); }}>Save</button>
+            </div>
+            <div className="text-xs mb-1">Server base</div>
+            <div className="flex gap-2 items-center">
+              <input className="border rounded px-2 py-1 w-full" value={devBase} onChange={(e)=>{ setDevBase(e.target.value); try{localStorage.setItem('mcp_dev_base', e.target.value);}catch{} }} />
+              <button className="px-2 py-1 rounded border" onClick={saveDevPublicBase}>Save</button>
+              <button className="px-2 py-1 rounded border" onClick={loadDev} disabled={devBusy}>{devBusy?'Loading…':'Refresh'}</button>
+            </div>
+            <div className="mt-3 text-xs text-gray-600">Endpoints</div>
+            <div className="text-[11px] flex items-center gap-2 mt-1">
+              <span>Streamable HTTP (Inspector)</span>
+              <code className="px-1 py-0.5 bg-gray-50 border rounded">{devBase.replace(/\/$/,'') + '/mcp/mcp-dev/stream'}</code>
+              <button className="px-1 py-0.5 border rounded" onClick={()=>copy(devBase.replace(/\/$/,'') + '/mcp/mcp-dev/stream')}>Copy</button>
+              <span className="text-gray-400">(legacy: {devBase.replace(/\/$/,'') + '/mcp-dev/stream'})</span>
+              <button className="px-2 py-0.5 border rounded" onClick={testStreamDev} disabled={devTestBusy}>{devTestBusy?'Testing…':'Test stream'}</button>
+            </div>
+            {!!devTestMsg && <div className="text-[11px] text-gray-600 mt-1">{devTestMsg}</div>}
+            <div className="text-[11px] flex items-center gap-2 mt-1">
+              <span>SSE URL (OpenAI Responses server_url)</span>
+              <code className="px-1 py-0.5 bg-gray-50 border rounded">{devBase.replace(/\/$/,'') + '/mcp-dev/events'}</code>
+              <button className="px-1 py-0.5 border rounded" onClick={()=>copy(devBase.replace(/\/$/,'') + '/mcp-dev/events')}>Copy</button>
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <button className="px-2 py-1 rounded border" onClick={async()=>{ try{ setDevEnableBusy(true); const r = await fetch('/api/admin/mcp-dev/enabled', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify({ enabled: true }) }); const j = await r.json(); if (r.ok && j?.ok) { setDevEnabled(true); loadDev(); } } finally { setDevEnableBusy(false);} }}>Start</button>
+              <button className="px-2 py-1 rounded border" onClick={async()=>{ try{ setDevEnableBusy(true); const r = await fetch('/api/admin/mcp-dev/enabled', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify({ enabled: false }) }); const j = await r.json(); if (r.ok && j?.ok) { setDevEnabled(false); loadDev(); } } finally { setDevEnableBusy(false);} }}>Stop</button>
+              {devEnableBusy && <span className="text-xs text-gray-500">Applying…</span>}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs mb-1">Status</div>
+            <StatusRow label="HTTP Base" value={dev.httpBase} />
+            <div className="text-sm flex items-center gap-2">
+              <div className="text-gray-500 w-40">Token</div>
+              <input className="border rounded px-2 py-1 font-mono w-full" value={dev.token} onChange={(e)=>{ const v=e.target.value; setDev((s)=>({ ...s, token: v })); try { localStorage.setItem('mcp_dev_token', v); } catch {} }} placeholder="Paste token if not shown" />
+              <button className="px-2 py-1 rounded border" onClick={()=>copy(dev.token || '')}>Copy</button>
+            </div>
+            <div className="flex items-center gap-2 mt-2">
+              <button className="px-2 py-1 rounded border" onClick={fetchDevToken}>Show</button>
+              <button className="px-2 py-1 rounded border" onClick={regenDevToken}>Regenerate</button>
+              <button className="px-2 py-1 rounded border" onClick={disableDevToken}>Disable</button>
+            </div>
+          </div>
+        </div>
+        <div className="mt-3">
+          <div className="text-sm font-medium mb-1">Tools</div>
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <button className="px-3 py-1.5 rounded border text-sm min-w-[120px]" onClick={loadDevTools}>Load tools</button>
+            <select className="border rounded px-3 py-1.5 text-sm min-w-[360px] flex-1" value={devToolName} onChange={(e)=>setDevToolName(e.target.value)}>
+              {devTools.map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
+            </select>
+            <button className="px-3 py-1.5 rounded border text-sm min-w-[110px]" onClick={callDevTool} disabled={devToolBusy || !devToolName}>{devToolBusy?'Running…':'Run tool'}</button>
+          </div>
+          {!!devToolsMsg && <div className="text-xs text-gray-600 mb-2">{devToolsMsg}</div>}
+          <div className="mb-2">
+            <div className="text-xs text-gray-600 mb-1">Arguments (JSON)</div>
+            <textarea className="w-full border rounded px-2 py-1 font-mono text-xs" rows={4} value={devToolArgs} onChange={(e)=>setDevToolArgs(e.target.value)} placeholder="{}" />
+          </div>
+          {devToolOut && <pre className="text-xs bg-gray-50 border rounded p-2 whitespace-pre-wrap overflow-auto max-h-60">{devToolOut}</pre>}
+        </div>
+      </Card>
+          )}
+
+          {false && sel==='presta' && (
+      <Card title={`Settings & Status ${psEnabled && ps.wsUrl ? '• ONLINE' : '• OFFLINE'}`}>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <div className="text-xs mb-1">Public base (admin)</div>
+            <div className="flex gap-2 items-center">
+              <input className="border rounded px-2 py-1 w-full" value={psBase} onChange={(e)=>{ setPsBase(e.target.value); try{localStorage.setItem('mcp_dev_presta_base', e.target.value);}catch{} }} />
+              <button className="px-2 py-1 rounded border" onClick={savePsPublicBase} disabled={psAdminBusy}>Save</button>
+              <button className="px-2 py-1 rounded border" onClick={loadPs} disabled={psBusy}>{psBusy?'Loading…':'Refresh'}</button>
+            </div>
+            {adminMsg && <div className="text-xs text-gray-600 mt-1">{adminMsg}</div>}
+            <div className="mt-3 text-xs text-gray-600">Endpoints</div>
+            <div className="text-[11px] flex items-center gap-2 mt-1">
+              <span>Streamable HTTP (Inspector)</span>
+              <code className="px-1 py-0.5 bg-gray-50 border rounded">{psBase.replace(/\/$/,'') + '/mcp/mcp-dev-prestashop/stream'}</code>
+              <button className="px-1 py-0.5 border rounded" onClick={()=>copy(psBase.replace(/\/$/,'') + '/mcp/mcp-dev-prestashop/stream')}>Copy</button>
+              <span className="text-gray-400">(legacy: {psBase.replace(/\/$/,'') + '/mcp-dev-prestashop/stream'})</span>
+              <button className="px-2 py-0.5 border rounded" onClick={testStreamPs} disabled={psTestBusy}>{psTestBusy?'Testing…':'Test stream'}</button>
+            </div>
+            {!!psTestMsg && <div className="text-[11px] text-gray-600 mt-1">{psTestMsg}</div>}
+            <div className="mt-2 flex items-center gap-2">
+              <button className="px-2 py-1 rounded border" onClick={async()=>{ try{ setPsEnableBusy(true); const r = await fetch('/api/admin/mcp-dev-prestashop/enabled', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify({ enabled: true }) }); const j = await r.json(); if (r.ok && j?.ok) { setPsEnabled(true); loadPs(); } } finally { setPsEnableBusy(false);} }}>Start</button>
+              <button className="px-2 py-1 rounded border" onClick={async()=>{ try{ setPsEnableBusy(true); const r = await fetch('/api/admin/mcp-dev-prestashop/enabled', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify({ enabled: false }) }); const j = await r.json(); if (r.ok && j?.ok) { setPsEnabled(false); loadPs(); } } finally { setPsEnableBusy(false);} }}>Stop</button>
+              {psEnableBusy && <span className="text-xs text-gray-500">Applying…</span>}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs mb-1">Status</div>
+            <StatusRow label="HTTP Base" value={ps.httpBase} />
+            <div className="text-sm flex items-center gap-2 mt-1">
+              <div className="text-gray-500 w-40">Token</div>
+              <input className="border rounded px-2 py-1 font-mono w-full" value={ps.token} onChange={(e)=>{ const v=e.target.value; setPs((s)=>({ ...s, token: v })); try{ localStorage.setItem('mcp_dev_presta_token', v); } catch{} }} placeholder="Paste token if not shown" />
+              <button className="px-2 py-1 rounded border" onClick={()=>{ try{ localStorage.setItem('mcp_dev_presta_token', ps.token || ''); } catch{}; copy(ps.token || ''); }}>Copy</button>
+            </div>
+            <div className="flex items-center gap-2 mt-1">
+              <button className="px-2 py-1 rounded border" onClick={regenPsToken} disabled={psAdminBusy}>Regenerate Token</button>
+              <button className="px-2 py-1 rounded border" onClick={disablePsToken} disabled={psAdminBusy}>Disable Token</button>
+              <button className="px-2 py-1 rounded border" onClick={async()=>{ try{ const r = await fetch('/api/admin/mcp-dev-prestashop/token', { credentials:'include' }); const j = await r.json(); if (r.ok && j?.ok != null) { setPs((s)=>({ ...s, token: j.token||'' })); try{ localStorage.setItem('mcp_dev_presta_token', j.token||''); } catch{} } else setPsAdminMsg2(j?.error || 'cannot fetch token'); } catch(e) { setPsAdminMsg2(String(e?.message||e)); } }}>Show Token</button>
+            </div>
+            <div className="text-[11px] text-gray-500 mt-1">Token is only shown to admin/localhost in status. Use the buttons to rotate/disable.</div>
+            {psAdminMsg2 && <div className="text-xs text-gray-600 mt-1">{psAdminMsg2}</div>}
+          </div>
+        </div>
+        <div className="mt-3">
+          <div className="text-sm font-medium mb-1">Tools</div>
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <button className="px-3 py-1.5 rounded border text-sm min-w-[120px]" onClick={loadPsTools}>Load tools</button>
+            <select className="border rounded px-3 py-1.5 text-sm min-w-[360px] flex-1" value={psToolName} onChange={(e)=>setPsToolName(e.target.value)}>
+              {psTools.map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
+            </select>
+            <button className="px-3 py-1.5 rounded border text-sm min-w-[110px]" onClick={callPsTool} disabled={psToolBusy || !psToolName}>{psToolBusy?'Running…':'Run tool'}</button>
+          </div>
+          {!!psToolsMsg && <div className="text-xs text-gray-600 mb-2">{psToolsMsg}</div>}
+          <div className="mb-2">
+            <div className="text-xs text-gray-600 mb-1">Arguments (JSON)</div>
+            <textarea className="w-full border rounded px-2 py-1 font-mono text-xs" rows={4} value={psToolArgs} onChange={(e)=>setPsToolArgs(e.target.value)} placeholder="{}" />
+          </div>
+          {psToolOut && <pre className="text-xs bg-gray-50 border rounded p-2 whitespace-pre-wrap overflow-auto max-h-60">{psToolOut}</pre>}
+        </div>
+      </Card>
+          )}
+
+          {sel!=='dev' && sel!=='presta' && srvForm?.id && (
+            <Card title={`Settings & Status ${srvForm.enabled ? '• ENABLED' : ''}`}>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <div className="text-xs mb-1">Name</div>
+                  <input className="border rounded px-2 py-1 w-full" value={srvForm.name||''} onChange={(e)=>setSrvForm(f=>({ ...f, name:e.target.value }))} />
+                  <div className="text-xs mb-1 mt-2">Kind</div>
+                  <select className="border rounded px-2 py-1 w-full" value={srvForm.kind||''} onChange={(e)=>{ const v=e.target.value; setSrvForm(f=>({ ...f, kind:v })); setTimeout(()=>autoFillEndpoints(false), 0); }}>
+                    {KIND_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                  <div className="text-xs mb-1 mt-2">Group</div>
+                  <div className="flex items-center gap-2">
+                    <select className="border rounded px-2 py-1 w-full" value={srvForm.group_id||''} onChange={(e)=>setSrvForm(f=>({ ...f, group_id: e.target.value }))}>
+                      <option value="">— None —</option>
+                      {grpItems.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                    </select>
+                    <button className="px-2 py-1 rounded border" onClick={createGroup} disabled={grpBusy}>New</button>
+                  </div>
+                  <div className="text-xs mb-1 mt-2">Server Type</div>
+                  <select className="border rounded px-2 py-1 w-full" value={srvForm.server_type||''} onChange={(e)=>setSrvForm(f=>({ ...f, server_type: e.target.value }))}>
+                    {TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                  {/* Type-specific options */}
+                  {srvForm.server_type === 'stripe' && (
+                    <div className="mt-2 p-2 border rounded bg-gray-50">
+                      <div className="text-xs font-medium mb-1">Stripe Settings</div>
+                      <div className="text-[11px] text-gray-600 mb-2">Used by HTTP tools (http_get_json / http_post_json)</div>
+                      <div className="text-xs mb-1">API Base URL</div>
+                      <input
+                        className="border rounded px-2 py-1 w-full text-xs"
+                        placeholder={typeDefaults.stripe.api_base_url}
+                        value={opt('api_base_url') || ''}
+                        onChange={(e)=>setOpt('api_base_url', e.target.value)}
+                      />
+                      <div className="text-xs mb-1 mt-2">Secret Key</div>
+                      <input
+                        type="password"
+                        className="border rounded px-2 py-1 w-full text-xs"
+                        placeholder="sk_live_..."
+                        onBlur={(e)=>{ const v=(e.target.value||'').trim(); if (v) setOpt('secret_key', v); e.target.value=''; }}
+                      />
+                      {(opt('secret_key')) && (
+                        <div className="mt-1 flex items-center gap-2 text-xs">
+                          <span className="text-gray-600">Saved Secret:</span>
+                          <code className="px-1 py-0.5 bg-white border rounded">••••••••</code>
+                          <button className="px-2 py-0.5 border rounded" onClick={()=>copy(opt('secret_key'))}>Copy</button>
+                        </div>
+                      )}
+                      <div className="text-xs mb-1 mt-2">API Version</div>
+                      <input
+                        className="border rounded px-2 py-1 w-full text-xs"
+                        placeholder="2024-06-20"
+                        value={opt('api_version') || ''}
+                        onChange={(e)=>setOpt('api_version', e.target.value)}
+                      />
+                      <div className="text-xs mb-1 mt-2">Account (optional)</div>
+                      <input
+                        className="border rounded px-2 py-1 w-full text-xs"
+                        placeholder="acct_... (for Connect)"
+                        value={opt('account') || ''}
+                        onChange={(e)=>setOpt('account', e.target.value)}
+                      />
+                      <label className="mt-2 inline-flex items-center gap-2 text-xs">
+                        <input type="checkbox" checked={!!opt('test_mode')} onChange={(e)=>setOpt('test_mode', !!e.target.checked)} />
+                        <span>Test mode</span>
+                      </label>
+                      <div className="mt-2">
+                        <div className="text-xs font-medium mb-1">Advanced: Raw options JSON</div>
+                        <textarea className="w-full border rounded px-2 py-1 font-mono text-[11px]" rows={4}
+                          placeholder='{"base_url":"https://api.stripe.com","allowed_tools":["http_get_json"]}'
+                          value={opt('raw_options_json') || ''}
+                          onChange={(e)=>setOpt('raw_options_json', e.target.value)}
+                        />
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <button className="px-2 py-1 rounded border text-xs" onClick={async()=>{
+                          try {
+                            const base = (opt('api_base_url') || typeDefaults.stripe.api_base_url || '').replace(/\/$/, '');
+                            if (!base) { alert('API base URL missing'); return; }
+                            const url = `${base}/v1/charges?limit=1`;
+                            const headers = { 'Authorization': `Bearer ${opt('secret_key')||''}` };
+                            const h2 = buildStripeHeaders();
+                            Object.assign(headers, h2);
+                            const r = await fetch('/api/http/proxy', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify({ method:'GET', url, headers }) });
+                            const ct = r.headers.get('content-type') || '';
+                            const out = /application\/json/i.test(ct) ? JSON.stringify(await r.json(), null, 2) : await r.text();
+                            alert(out);
+                          } catch (e) { alert(String(e?.message||e)); }
+                        }}>Test Stripe API (GET charges?limit=1)</button>
+                        <button className="px-2 py-1 rounded border text-xs" onClick={()=>{
+                          try {
+                            const base = (opt('api_base_url') || typeDefaults.stripe.api_base_url || '').replace(/\/$/, '');
+                            const url = `${base}/v1/charges?limit=1`;
+                            const headers = buildStripeHeaders();
+                            const args = { url, headers, timeout_ms: 20000 };
+                            // Prefill tool args area if visible
+                            setSrvToolName('http_get_json');
+                            setSrvToolArgs(JSON.stringify(args, null, 2));
+                            setSrvToolsMsg('Prefilled http_get_json from Stripe settings.');
+                          } catch {}
+                        }}>Prefill http_get_json</button>
+                      </div>
+
+                      {/* Path Builder */}
+                      <div className="mt-3 p-2 border rounded bg-white">
+                        <div className="text-xs font-medium mb-1">Build Stripe URL</div>
+                        <div className="text-[11px] text-gray-600 mb-1">Enter a path like /v1/customers or /v1/customers/cus_123</div>
+                        {(() => {
+                          const base = (opt('api_base_url') || typeDefaults.stripe.api_base_url || '').replace(/\/$/, '');
+                          const path = stripePath;
+                          const full = `${base}${path.startsWith('/')?'':'/'}${path}`;
+                          const headers = buildStripeHeaders();
+                          return (
+                            <div className="space-y-2">
+                              <input className="border rounded px-2 py-1 w-full text-xs" value={path} onChange={(e)=>setStripePath(e.target.value)} />
+                              <div className="flex items-center gap-2">
+                                <code className="px-2 py-1 bg-gray-50 border rounded text-[11px] break-all flex-1">{full}</code>
+                                <button className="px-2 py-1 rounded border text-xs" onClick={()=>copy(full)}>Copy</button>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <button className="px-2 py-1 rounded border text-xs" onClick={()=>{
+                                  const args = { url: full, headers, timeout_ms: 20000 };
+                                  setSrvToolName('http_get_json');
+                                  setSrvToolArgs(JSON.stringify(args, null, 2));
+                                  setSrvToolsMsg('Prefilled http_get_json from path builder.');
+                                }}>Prefill GET</button>
+                                <button className="px-2 py-1 rounded border text-xs" onClick={()=>{
+                                  const args = {
+                                    url: full,
+                                    headers: { ...headers, 'Content-Type': 'application/x-www-form-urlencoded' },
+                                    query: 'amount=2000&currency=usd&payment_method_types[0]=card',
+                                    timeout_ms: 20000,
+                                  };
+                                  setSrvToolName('http_post_json');
+                                  setSrvToolArgs(JSON.stringify(args, null, 2));
+                                  setSrvToolsMsg('Prefilled http_post_json (form-encoded example).');
+                                }}>Prefill POST</button>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+
+                      {/* Quick Tools */}
+                      <div className="mt-3 p-2 border rounded bg-white">
+                        <div className="text-xs font-medium mb-1">Quick Stripe Tools</div>
+                        <div className="text-[11px] text-gray-600 mb-2">These prefill the tool runner using your saved Stripe settings.</div>
+                        <div className="flex flex-wrap items-center gap-2 mb-2">
+                          <button className="px-2 py-1 rounded border text-xs" onClick={()=>{
+                            const email = prompt('Customer email');
+                            if (!email) return;
+                            const args = { path: '/v1/customers/search', query: { query: `email:'${email}'` }, timeout_ms: 20000 };
+                            setSrvToolName('stripe.get');
+                            setSrvToolArgs(JSON.stringify(args, null, 2));
+                            setSrvToolsMsg('Prefilled stripe.get (customer by email)');
+                          }}>stripe.get_customer_by_email</button>
+                          <button className="px-2 py-1 rounded border text-xs" onClick={()=>{
+                            const cid = prompt('Customer ID (e.g., cus_...)');
+                            if (!cid) return;
+                            const args = { path: '/v1/payment_intents', query: { customer: String(cid), limit: '5' }, timeout_ms: 20000 };
+                            setSrvToolName('stripe.get');
+                            setSrvToolArgs(JSON.stringify(args, null, 2));
+                            setSrvToolsMsg('Prefilled stripe.get (payment intents by customer)');
+                          }}>stripe.get_transactions(customer_id)</button>
+                        </div>
+                        <div className="text-[11px] text-gray-600">Edit URL or limit in Arguments before running if needed.</div>
+                      </div>
+                    </div>
+                  )}
+                  <div className="text-xs mb-1 mt-2">HTTP Base</div>
+                  <input className="border rounded px-2 py-1 w-full" value={srvForm.http_base||''} onChange={(e)=>{ const v=e.target.value; setSrvForm(f=>({ ...f, http_base:v })); }} onBlur={()=>autoFillEndpoints(false)} placeholder="https://host" />
+                  <div className="text-xs mb-1 mt-2">WS URL</div>
+                  <input className="border rounded px-2 py-1 w-full" value={srvForm.ws_url||''} onChange={(e)=>setSrvForm(f=>({ ...f, ws_url:e.target.value }))} placeholder="wss://host/mcp/ws" />
+                  <div className="text-xs mb-1 mt-2">Streamable HTTP (Inspector)</div>
+                  <div className="flex gap-2 items-center">
+                    <input className="border rounded px-2 py-1 w-full" value={srvForm.stream_url||''} onChange={(e)=>setSrvForm(f=>({ ...f, stream_url:e.target.value }))} placeholder="https://host/mcp/stream" />
+                    <button className="px-2 py-1 rounded border" onClick={()=>copy(srvForm.stream_url||'')}>Copy</button>
+                  </div>
+                  <div className="text-xs mb-1 mt-2">SSE URL (OpenAI Responses server_url)</div>
+                  <div className="flex gap-2 items-center">
+                    <input className="border rounded px-2 py-1 w-full" value={srvForm.sse_url||''} onChange={(e)=>setSrvForm(f=>({ ...f, sse_url:e.target.value }))} placeholder="https://host/mcp/events" />
+                    <button className="px-2 py-1 rounded border" onClick={()=>copy(srvForm.sse_url||'')}>Copy</button>
+                  </div>
+                  <div className="text-xs mb-1 mt-2">OpenAI Responses URL</div>
+                  <div className="flex items-center gap-3 text-sm">
+                    <label className="inline-flex items-center gap-1">
+                      <input
+                        type="radio"
+                        name={`srv_url_pref_${srvForm.id||'x'}`}
+                        checked={((srvForm.options||{}).server_url_pref||'stream')==='sse'}
+                        onChange={()=>setOpt('server_url_pref','sse')}
+                      />
+                      SSE (server_url)
+                    </label>
+                    <label className="inline-flex items-center gap-1">
+                      <input
+                        type="radio"
+                        name={`srv_url_pref_${srvForm.id||'x'}`}
+                        checked={((srvForm.options||{}).server_url_pref||'stream')==='stream'}
+                        onChange={()=>setOpt('server_url_pref','stream')}
+                      />
+                      Streamable HTTP
+                    </label>
+                  </div>
+                  <div className="text-xs mb-1 mt-2">Token</div>
+                  <div className="flex gap-2 items-center">
+                    <input className="border rounded px-2 py-1 font-mono w-full" value={srvForm.token||''} onChange={(e)=>setSrvForm(f=>({ ...f, token:e.target.value }))} placeholder="token (optional)" />
+                    <button className="px-2 py-1 rounded border" onClick={()=>copy(srvForm.token||'')}>Copy</button>
+                    <button className="px-2 py-1 rounded border" onClick={async()=>{ if(!srvForm.id) return; const r=await fetch(`/api/mcp-servers/${encodeURIComponent(srvForm.id)}/token/regenerate`, { method:'POST', credentials:'include' }); const j=await r.json(); if (r.ok && j?.ok) setSrvForm(f=>({ ...f, token: j.token||'' })); }} title="Regenerate">Regen</button>
+                    <button className="px-2 py-1 rounded border" onClick={async()=>{ if(!srvForm.id) return; await fetch(`/api/mcp-servers/${encodeURIComponent(srvForm.id)}/token/disable`, { method:'POST', credentials:'include' }); setSrvForm(f=>({ ...f, token:'' })); }} title="Disable">Disable</button>
+                  </div>
+                  <label className="mt-2 inline-flex items-center gap-2 text-sm"><input type="checkbox" checked={!!srvForm.enabled} onChange={(e)=>setSrvForm(f=>({ ...f, enabled: e.target.checked }))} /> Enabled</label>
+                  <div className="text-xs mb-1 mt-2">Notes</div>
+                  <textarea className="border rounded px-2 py-1 w-full text-sm" rows={3} value={srvForm.notes||''} onChange={(e)=>setSrvForm(f=>({ ...f, notes:e.target.value }))} />
+                  <div className="mt-2 flex items-center gap-2">
+                    <button className="px-2 py-1 rounded border" onClick={saveServer} disabled={srvBusy}>Save</button>
+                    <button className="px-2 py-1 rounded border text-red-700" onClick={deleteServer} disabled={srvBusy}>Delete</button>
+                    <button className="px-2 py-1 rounded border" onClick={testServer} disabled={srvTestBusy}>{srvTestBusy?'Testing…':'Test stream'}</button>
+                    <button className="px-2 py-1 rounded border" onClick={()=>autoFillEndpoints(true)}>Auto‑fill endpoints</button>
+                    {!!srvTestMsg2 && <span className="text-[11px] text-gray-600">{srvTestMsg2}</span>}
+                    {!!srvMsg && <span className="text-[11px] text-gray-600">{srvMsg}</span>}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs mb-1">Tools</div>
+                  {srvForm.server_type === 'stripe' && (
+                    <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px]">
+                      <button
+                        className="px-2 py-1 rounded border"
+                        onClick={()=>{
+                          try {
+                            const headers = buildStripeHeaders();
+                            let args;
+                            if (srvToolName === 'stripe.get') {
+                              args = { path: '/v1/charges', query: { limit: '1' }, timeout_ms: 20000 };
+                            } else if (srvToolName === 'stripe.post') {
+                              args = { path: '/v1/payment_intents', body: { amount: 2000, currency: 'usd', payment_method_types: ['card'] }, timeout_ms: 20000 };
+                            } else {
+                              args = { url: '', headers, timeout_ms: 20000 };
+                            }
+                            setSrvToolArgs(JSON.stringify(args, null, 2));
+                            setSrvToolsMsg('Initialized args for selected tool using Stripe settings.');
+                          } catch {}
+                        }}
+                      >Use computed Stripe headers</button>
+                      <button className="px-2 py-1 rounded border" onClick={()=>setSrvToolArgs('')}>Clear args</button>
+                    </div>
+                  )}
+                  <div className="flex flex-wrap items-center gap-2 mb-2">
+                    <button className="px-3 py-1.5 rounded border text-sm min-w-[120px]" onClick={loadSrvTools}>Load tools</button>
+                    <select className="border rounded px-3 py-1.5 text-sm min-w-[360px] flex-1" value={srvToolName} onChange={(e)=>setSrvToolName(e.target.value)}>
+                      <option value="">(none)</option>
+                      {srvTools.map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
+                    </select>
+                    <button className="px-3 py-1.5 rounded border text-sm min-w-[110px]" onClick={callSrvTool} disabled={srvToolBusy || !srvToolName}>{srvToolBusy?'Running…':'Run tool'}</button>
+                  </div>
+                  {!!srvToolsMsg && <div className="text-xs text-gray-600 mb-2">{srvToolsMsg}</div>}
+                  <div className="mb-2">
+                    <div className="text-xs text-gray-600 mb-1">Arguments (JSON)</div>
+                    <textarea className="w-full border rounded px-2 py-1 font-mono text-xs" rows={4} value={srvToolArgs} onChange={(e)=>setSrvToolArgs(e.target.value)} placeholder="{}" />
+                  </div>
+                  {srvToolOut && <pre className="text-xs bg-gray-50 border rounded p-2 whitespace-pre-wrap overflow-auto max-h-60">{srvToolOut}</pre>}
+                </div>
+                  {srvForm.server_type === 'database' && (
+                    <div className="mt-3">
+                      <div className="text-xs font-medium mb-1">Database options</div>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <label>DB Kind
+                          <select className="border rounded px-2 py-1 w-full" value={opt('db_kind')} onChange={(e)=>setOpt('db_kind', e.target.value)}>
+                            <option value="">Select…</option>
+                            <option value="postgresql">PostgreSQL</option>
+                            <option value="mysql">MySQL</option>
+                            <option value="mariadb">MariaDB</option>
+                          </select>
+                        </label>
+                        <label>Port
+                          <input className="border rounded px-2 py-1 w-full" value={opt('port')} onChange={(e)=>setOpt('port', e.target.value)} placeholder="5432" />
+                        </label>
+                        <label>Host
+                          <input className="border rounded px-2 py-1 w-full" value={opt('host')} onChange={(e)=>setOpt('host', e.target.value)} placeholder="localhost" />
+                        </label>
+                        <label>Database
+                          <input className="border rounded px-2 py-1 w-full" value={opt('database')} onChange={(e)=>setOpt('database', e.target.value)} placeholder="db" />
+                        </label>
+                        <label>User
+                          <input className="border rounded px-2 py-1 w-full" value={opt('user')} onChange={(e)=>setOpt('user', e.target.value)} placeholder="user" />
+                        </label>
+                        <label>Password
+                          <input className="border rounded px-2 py-1 w-full" type="password" value={opt('password')} onChange={(e)=>setOpt('password', e.target.value)} placeholder="••••••" />
+                        </label>
+                        <label className="col-span-2">Connection URL
+                          <input className="border rounded px-2 py-1 w-full" value={opt('connection_url')} onChange={(e)=>setOpt('connection_url', e.target.value)} placeholder="postgresql://user:pass@host:5432/db" />
+                        </label>
+                      </div>
+                      <div className="mt-2 flex items-center gap-2">
+                        <button className="px-2 py-1 rounded border" onClick={testDb} disabled={dbTestBusy}>{dbTestBusy?'Testing…':'Test connection'}</button>
+                        {!!dbTestMsg && <span className="text-[11px] text-gray-600">{dbTestMsg}</span>}
+                      </div>
+                    </div>
+                  )}
+                  {srvForm.server_type === 'files' && (
+                    <div className="mt-3 text-xs">
+                      <div className="text-xs font-medium mb-1">File options</div>
+                      <label>Root directory
+                        <input className="border rounded px-2 py-1 w-full" value={opt('root')} onChange={(e)=>setOpt('root', e.target.value)} placeholder="/var/data" />
+                      </label>
+                      <label className="mt-1 inline-flex items-center gap-2"><input type="checkbox" checked={!!opt('allow_write')} onChange={(e)=>setOpt('allow_write', e.target.checked)} /> Allow write</label>
+                    </div>
+                  )}
+                  {srvForm.server_type === 'apis' && (
+                    <div className="mt-3 text-xs">
+                      <div className="text-xs font-medium mb-1">API options</div>
+                      <label>Base URL
+                        <input className="border rounded px-2 py-1 w-full" value={opt('base_url')} onChange={(e)=>setOpt('base_url', e.target.value)} placeholder="https://api.example.com" />
+                      </label>
+                      <label className="block mt-1">API key (optional)
+                        <input className="border rounded px-2 py-1 w-full" value={opt('api_key')} onChange={(e)=>setOpt('api_key', e.target.value)} placeholder="API key for this server (e.g., PrestaShop WS key)" />
+                      </label>
+                      <label className="block mt-1">Default headers (JSON)
+                        <textarea className="border rounded px-2 py-1 w-full" rows={3} value={typeof opt('headers_json')==='string'?opt('headers_json'):JSON.stringify(opt('headers_json')||{}, null, 2)} onChange={(e)=>setOpt('headers_json', e.target.value)} />
+                      </label>
+                    </div>
+                  )}
+                  {srvForm.server_type === 'prestashop' && (
+                    <div className="mt-3 text-xs">
+                      <div className="text-xs font-medium mb-1">PrestaShop options</div>
+                      <label>Shop base URL
+                        <input className="border rounded px-2 py-1 w-full" value={opt('base_url')} onChange={(e)=>setOpt('base_url', e.target.value)} placeholder="https://yourshop.example.com" />
+                      </label>
+                      <label className="block mt-1">API key (WS key)
+                        <input className="border rounded px-2 py-1 w-full" value={opt('api_key')} onChange={(e)=>setOpt('api_key', e.target.value)} placeholder="Your PrestaShop WS API key" />
+                      </label>
+                      <div className="text-[11px] text-gray-500 mt-1">Tip: base URL may be either the shop root or /api; both are supported.</div>
+                    </div>
+                  )}
+                  {srvForm.server_type === 'stripe' && (
+                    <div className="mt-3 text-xs">
+                      <div className="text-xs font-medium mb-1">Stripe options</div>
+                      <label>API base URL
+                        <input className="border rounded px-2 py-1 w-full" value={opt('base_url') || 'https://api.stripe.com/v1'} onChange={(e)=>setOpt('base_url', e.target.value)} placeholder="https://api.stripe.com/v1" />
+                      </label>
+                      <label className="block mt-1">Secret key
+                        <input className="border rounded px-2 py-1 w-full" type="password" value={opt('api_key')} onChange={(e)=>setOpt('api_key', e.target.value)} placeholder="sk_live_... or sk_test_..." />
+                      </label>
+                      <div className="grid grid-cols-2 gap-2 mt-1">
+                        <label>API version
+                          <input className="border rounded px-2 py-1 w-full" value={opt('api_version')} onChange={(e)=>setOpt('api_version', e.target.value)} placeholder="2024-06-20" />
+                        </label>
+                        <label>Account (optional)
+                          <input className="border rounded px-2 py-1 w-full" value={opt('account')} onChange={(e)=>setOpt('account', e.target.value)} placeholder="acct_... (for Connect)" />
+                        </label>
+                      </div>
+                      <label className="mt-1 inline-flex items-center gap-2"><input type="checkbox" checked={!!opt('test_mode')} onChange={(e)=>setOpt('test_mode', e.target.checked)} /> Test mode</label>
+                      <div className="text-[11px] text-gray-500 mt-1">Store Stripe credentials here; tools can read them from this server’s options.</div>
+                    </div>
+                  )}
+                  {srvForm.server_type === 'ai' && (
+                    <div className="mt-3 text-xs">
+                      <div className="text-xs font-medium mb-1">AI options</div>
+                      <label>API base URL
+                        <input className="border rounded px-2 py-1 w-full" value={opt('api_base_url')} onChange={(e)=>setOpt('api_base_url', e.target.value)} placeholder="https://api.openai.com/v1" />
+                      </label>
+                      <label className="block mt-1">API key
+                        <input className="border rounded px-2 py-1 w-full" value={opt('api_key')} onChange={(e)=>setOpt('api_key', e.target.value)} placeholder="sk-..." />
+                      </label>
+                      <label className="block mt-1">Organization
+                        <input className="border rounded px-2 py-1 w-full" value={opt('organization')} onChange={(e)=>setOpt('organization', e.target.value)} placeholder="org_..." />
+                      </label>
+                      <label className="block mt-1">Project
+                        <input className="border rounded px-2 py-1 w-full" value={opt('project')} onChange={(e)=>setOpt('project', e.target.value)} placeholder="proj_..." />
+                      </label>
+                    </div>
+                  )}
+                  {srvForm.server_type === 'custom' && (
+                    <div className="mt-3 text-xs">
+                      <div className="text-xs font-medium mb-1">Custom options</div>
+                      <label>Module name / label
+                        <input className="border rounded px-2 py-1 w-full" value={opt('module')} onChange={(e)=>setOpt('module', e.target.value)} placeholder="my_business_rules" />
+                      </label>
+                      <label className="block mt-1">Config (JSON)
+                        <textarea className="border rounded px-2 py-1 w-full" rows={4} value={typeof opt('config_json')==='string'?opt('config_json'):JSON.stringify(opt('config_json')||{}, null, 2)} onChange={(e)=>setOpt('config_json', e.target.value)} />
+                      </label>
+                    </div>
+                  )}
+                  <div className="mt-3 text-xs">
+                    <div className="text-xs font-medium mb-1">Advanced: Raw options JSON</div>
+                    <textarea className="border rounded px-2 py-1 w-full" rows={6} value={optText} onChange={(e)=>setOptText(e.target.value)} />
+                    <div className="mt-2 flex items-center gap-2">
+                      <button className="px-2 py-1 rounded border" onClick={()=>{ try { const obj = JSON.parse(optText); setSrvForm(f=>({ ...f, options: obj })); setSrvMsg('Options applied (not saved)'); } catch (e) { setSrvMsg('Invalid JSON: ' + (e?.message||e)); } }}>Apply</button>
+                      <button className="px-2 py-1 rounded border" onClick={saveServer} disabled={srvBusy}>Save</button>
+                      {!!srvMsg && <span className="text-[11px] text-gray-600">{srvMsg}</span>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {sel!=='dev' && sel!=='presta' && srvForm?.id && (
+            <Card title="Files (Knowledge & MCP uploads)">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <div className="text-xs font-medium mb-1">Vector store files (from prompts linked to this server)</div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <button className="px-2 py-1 rounded border" onClick={loadSrvVectorFiles} disabled={srvVecBusy}>{srvVecBusy?'Loading…':'Load'}</button>
+                    <button className="px-2 py-1 rounded border" title="Clears MCP folder then copies the listed files (keep names)" onClick={()=>copyListedLocalToMcp(true)} disabled={srvVecBusy || !(srvVecFiles&&srvVecFiles.length)}>Reset & Copy to MCP</button>
+                    {!!srvVecMsg && <span className="text-[11px] text-gray-600">{srvVecMsg}</span>}
+                  </div>
+                  {!!srvVecImportResults.length && (
+                    <div className="text-[11px] text-gray-700 mb-2">
+                      {srvVecImportResults.filter(x=>x && x.ok===false).length ? (
+                        <>
+                          <div className="mb-1">Import errors:</div>
+                          <div className="max-h-24 overflow-auto border rounded bg-white">
+                            <table className="min-w-full text-[11px]">
+                              <thead className="bg-gray-50 border-b sticky top-0"><tr><th className="text-left px-2 py-1">File ID</th><th className="text-left px-2 py-1">Error</th></tr></thead>
+                              <tbody>
+                                {srvVecImportResults.filter(x=>x && x.ok===false).map((e,i)=> (
+                                  <tr key={`imp_err_${i}`} className="border-b"><td className="px-2 py-1 font-mono truncate" title={e.file_id}>{e.file_id||'-'}</td><td className="px-2 py-1 truncate" title={e.details||e.error}>{e.details||e.error||'failed'}</td></tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </>
+                      ) : null}
+                    </div>
+                  )}
+                  <div className="border rounded bg-white max-h-56 overflow-auto">
+                    <table className="min-w-full text-xs">
+                      <thead className="bg-gray-50 border-b sticky top-0"><tr><th className="text-left px-2 py-1">Prompt</th><th className="text-left px-2 py-1">Vector</th><th className="text-left px-2 py-1">File</th><th className="text-left px-2 py-1">File ID</th><th className="text-left px-2 py-1">Status</th><th className="text-left px-2 py-1">Actions</th></tr></thead>
+                      <tbody>
+                        {(srvVecFiles||[]).map((f,i)=> (
+                          <tr key={`${f.vector_store_id}:${f.id}:${i}`} className="border-b">
+                            <td className="px-2 py-1 truncate" title={f.prompt_name||f.prompt_id}>{f.prompt_name || f.prompt_id}</td>
+                            <td className="px-2 py-1 font-mono truncate" title={f.vector_store_id}>{f.vector_store_id}</td>
+                            <td className="px-2 py-1 truncate" title={f.file_name||''}>{f.file_name || '-'}</td>
+                            <td className="px-2 py-1 font-mono truncate" title={f.id}>{f.id}</td>
+                            <td className="px-2 py-1">{f.status||'-'}</td>
+                            <td className="px-2 py-1 text-xs"><button className="px-2 py-0.5 rounded border" onClick={()=>importVector([{ vector_store_id: f.vector_store_id, file_id: f.openai_file_id||f.id, file_name: f.file_name||undefined }])}>Import</button></td>
+                          </tr>
+                        ))}
+                        {!srvVecFiles?.length && (
+                          <tr><td className="px-2 py-2 text-gray-500" colSpan={5}>No files.</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-medium mb-1">MCP uploads (scoped to this server)</div>
+                  <div className="hidden">
+                    <button className="px-2 py-1 rounded border" onClick={loadSrvUploads} disabled={srvUpBusy}>{srvUpBusy?'Loading…':'Load'}</button>
+                    <button className="px-2 py-1 rounded border" onClick={uploadSrvTestFile} disabled={srvUpBusy}>Upload test file</button>
+                    {!!srvUpMsg && <span className="text-[11px] text-gray-600">{srvUpMsg}</span>}
+                  </div>
+                  <div className="text-[11px] text-gray-600 mb-1 flex items-center gap-2">
+                    <span>Folder:</span>
+                    <code className="px-1 py-0.5 bg-gray-50 border rounded max-w-[60%] truncate" title={srvUpPath}>{srvUpPath || '—'}</code>
+                    <button className="px-1 py-0.5 rounded border" onClick={()=>{ if (srvUpPath) try{ navigator.clipboard.writeText(srvUpPath); } catch{} }} disabled={!srvUpPath}>Copy</button>
+                    <button className="px-1 py-0.5 rounded border" onClick={loadSrvUploadPath}>Show path</button>
+                    <button className="px-1 py-0.5 rounded border" onClick={async()=>{ try { setSrvUpBusy(true); setSrvUpMsg(''); await loadSrvUploadPath(); await loadSrvFolder(); setSrvUpMsg('Folder refreshed'); } finally { setSrvUpBusy(false); } }} disabled={srvUpBusy}>Refresh folder</button>
+                    {!!srvUpPathMsg && <span className="text-[11px] text-gray-500">{srvUpPathMsg}</span>}
+                  </div>
+                  {!!srvFolderMsg && <div className="text-[11px] text-gray-600 mb-1">{srvFolderMsg}</div>}
+                  {!!srvFolderList.length && (
+                    <div className="border rounded bg-white max-h-36 overflow-auto mb-2">
+                      <table className="min-w-full text-[11px]">
+                        <thead className="bg-gray-50 border-b sticky top-0"><tr><th className="text-left px-2 py-1">Name</th><th className="text-left px-2 py-1">Size</th><th className="text-left px-2 py-1">Modified</th></tr></thead>
+                        <tbody>
+                          {srvFolderList.map((e,i)=>(
+                            <tr key={`f_${i}`} className="border-b">
+                              <td className="px-2 py-1 truncate" title={e.name}>{e.name}</td>
+                              <td className="px-2 py-1">{typeof e.size_bytes==='number' ? (Math.round(e.size_bytes/1024)+' KB') : '-'}</td>
+                              <td className="px-2 py-1">{e.mtime ? new Date(e.mtime).toLocaleString() : '-'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+
+                  <div className="hidden">
+                    <table className="min-w-full text-xs">
+                      <thead className="bg-gray-50 border-b sticky top-0"><tr><th className="text-left px-2 py-1">Filename</th><th className="text-left px-2 py-1">Type</th><th className="text-left px-2 py-1">Size</th><th className="text-left px-2 py-1">At</th><th className="text-left px-2 py-1">Remote</th></tr></thead>
+                      <tbody>
+                        {(srvUploads||[]).map((f)=> (
+                          <tr key={f.id} className={`border-b ${f.exists===false?'opacity-60':''}`}>
+                            <td className="px-2 py-1 truncate" title={f.file_name}>{f.file_name}</td>
+                            <td className="px-2 py-1 truncate" title={f.content_type}>{f.content_type||'-'}</td>
+                            <td className="px-2 py-1">{typeof f.size_bytes==='number'? (Math.round(f.size_bytes/1024)+' KB'): '-'}</td>
+                            <td className="px-2 py-1">{f.created_at ? new Date(f.created_at).toLocaleString() : '-'}</td>
+                            <td className="px-2 py-1">{f.is_remote ? (f.remote_provider||'remote') : '-'}</td>
+                          </tr>
+                        ))}
+                        {!srvUploads?.length && (
+                          <tr><td className="px-2 py-2 text-gray-500" colSpan={4}>No files.</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          )}
+          {/* Tool Access removed */}
+          {sel!=='dev' && sel!=='presta' && srvForm?.id && (
+            <Card title="Tools">
+              <div className="text-xs text-gray-700">
+                <div className="flex flex-wrap items-center gap-2 mb-2">
+                  <button className="px-3 py-1.5 rounded border text-sm min-w-[120px]" onClick={loadSrvTools}>Load tools</button>
+                  <select className="border rounded px-3 py-1.5 text-sm min-w-[360px] flex-1" value={srvToolName} onChange={(e)=>setSrvToolName(e.target.value)}>
+                    <option value="">(none)</option>
+                    {srvTools.map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
+                  </select>
+                  <button className="px-3 py-1.5 rounded border text-sm min-w-[110px]" onClick={callSrvTool} disabled={srvToolBusy || !srvToolName}>{srvToolBusy?'Running…':'Run tool'}</button>
+                </div>
+                {!!srvToolsMsg && <div className="text-xs text-gray-600 mb-2">{srvToolsMsg}</div>}
+                {/* Quick inputs for common args when schema provides them */}
+                {(() => {
+                  try {
+                    const sel = (srvTools || []).find(t => t && t.name === srvToolName) || null;
+                    const schema = (sel && (sel.inputSchema || sel.input_schema)) || {};
+                    const props = (schema && schema.properties) || {};
+                    const showVisitorId = Object.prototype.hasOwnProperty.call(props, 'visitorId') || Object.prototype.hasOwnProperty.call(props, 'visitor_id');
+                    const showLimit = Object.prototype.hasOwnProperty.call(props, 'limit');
+                    const showMessage = Object.prototype.hasOwnProperty.call(props, 'message');
+                    if (!showVisitorId && !showLimit && !showMessage) return null;
+                    const readArg = (k) => { try { const obj = JSON.parse(srvToolArgs || '{}'); const v = obj[k]; return v == null ? '' : String(v); } catch { return ''; } };
+                    const writeArg = (k, v, isNumber=false) => {
+                      try {
+                        let obj = {};
+                        try { obj = srvToolArgs ? JSON.parse(srvToolArgs) : {}; } catch { obj = {}; }
+                        obj[k] = isNumber ? (v === '' ? undefined : Number(v)) : v;
+                        if (obj[k] === undefined) delete obj[k];
+                        setSrvToolArgs(JSON.stringify(obj, null, 2));
+                      } catch {}
+                    };
+                    return (
+                      <div className="mb-2">
+                        <div className="text-xs text-gray-600 mb-1">Quick inputs</div>
+                        <div className="flex flex-wrap gap-2 items-end">
+                          {showVisitorId && (
+                            <label className="text-xs text-gray-700">
+                              <div className="mb-0.5">{Object.prototype.hasOwnProperty.call(props,'visitorId') ? 'visitorId' : 'visitor_id'}</div>
+                              <input className="border rounded px-2 py-1 text-xs" value={Object.prototype.hasOwnProperty.call(props,'visitorId') ? readArg('visitorId') : readArg('visitor_id')} onChange={(e)=>{ const k = Object.prototype.hasOwnProperty.call(props,'visitorId') ? 'visitorId' : 'visitor_id'; writeArg(k, e.target.value); }} placeholder="UUID or id" />
+                            </label>
+                          )}
+                          {showLimit && (
+                            <label className="text-xs text-gray-700">
+                              <div className="mb-0.5">limit</div>
+                              <input className="border rounded px-2 py-1 text-xs w-24" inputMode="numeric" value={readArg('limit')} onChange={(e)=>writeArg('limit', e.target.value, true)} placeholder="e.g. 3" />
+                            </label>
+                          )}
+                          {showMessage && (
+                            <label className="text-xs text-gray-700 flex-1 min-w-[200px]">
+                              <div className="mb-0.5">message</div>
+                              <input className="border rounded px-2 py-1 text-xs w-full" value={readArg('message')} onChange={(e)=>writeArg('message', e.target.value)} placeholder="Hello" />
+                            </label>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  } catch { return null; }
+                })()}
+                <div className="mb-2">
+                  <div className="text-xs text-gray-600 mb-1">Arguments (JSON)</div>
+                  <textarea className="w-full border rounded px-2 py-1 font-mono text-xs" rows={4} value={srvToolArgs} onChange={(e)=>setSrvToolArgs(e.target.value)} placeholder="{}" />
+                </div>
+                {srvToolOut && <pre className="text-xs bg-gray-50 border rounded p-2 whitespace-pre-wrap overflow-auto max-h-60">{srvToolOut}</pre>}
+              </div>
+            </Card>
+          )}
+
+          {sel!=='dev' && sel!=='presta' && srvForm?.id && (
+            <Card title="Tool Access (allowlist)">
+              <div className="text-xs text-gray-700">
+                <div className="flex flex-wrap items-center gap-2 mb-2">
+                  <div className="text-[11px] text-gray-600">Name‑scoped stream URL</div>
+                  <code className="px-1.5 py-0.5 bg-gray-50 border rounded text-[11px] break-all">{streamUrlForInspector || '-'}</code>
+                  <button className="px-2 py-0.5 rounded border" onClick={()=>copy(streamUrlForInspector)}>Copy</button>
+                </div>
+                <div className="flex items-center gap-2 mb-2">
+                  <input className="border rounded px-2 py-1 text-sm flex-1" placeholder="Filter by name (e.g. products.)" value={srvToolsFilter} onChange={(e)=>setSrvToolsFilter(e.target.value)} />
+                  <button className="px-2 py-1 rounded border" onClick={loadSrvTools}>Load server</button>
+                  <button className="px-2 py-1 rounded border" onClick={loadAllToolsAdmin}>Load built‑in</button>
+                  <button className="px-2 py-1 rounded border" onClick={()=>setSrvAllowedNames(srvTools.map(t=>t.name))} disabled={!srvTools.length}>All</button>
+                  <button className="px-2 py-1 rounded border" onClick={()=>setSrvAllowedNames([])}>None</button>
+                  <button className="px-2 py-1 rounded border" title="Products" onClick={()=>{ const names = srvTools.map(t=>t.name).filter(n=>/^products\./i.test(n)); setSrvAllowedNames(prev => Array.from(new Set([...(prev||[]), ...names]))); }}>Products</button>
+                  <button className="px-2 py-1 rounded border" title="Orders" onClick={()=>{ const names = srvTools.map(t=>t.name).filter(n=>/^orders\./i.test(n)); setSrvAllowedNames(prev => Array.from(new Set([...(prev||[]), ...names]))); }}>Orders</button>
+                  <button className="px-2 py-1 rounded border" title="Customers" onClick={()=>{ const names = srvTools.map(t=>t.name).filter(n=>/^customers\./i.test(n)); setSrvAllowedNames(prev => Array.from(new Set([...(prev||[]), ...names]))); }}>Customers</button>
+                  <button className="px-2 py-1 rounded border" title="Stock" onClick={()=>{ const names = srvTools.map(t=>t.name).filter(n=>/^(stock|inventory)\./i.test(n)); setSrvAllowedNames(prev => Array.from(new Set([...(prev||[]), ...names]))); }}>Stock</button>
+                  <button className="px-2 py-1 rounded border" title="Analytics" onClick={()=>{ const names = srvTools.map(t=>t.name).filter(n=>/^analytics\./i.test(n)); setSrvAllowedNames(prev => Array.from(new Set([...(prev||[]), ...names]))); }}>Analytics</button>
+                </div>
+                <div className="border rounded bg-white max-h-64 overflow-auto">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-gray-50 border-b sticky top-0">
+                      <tr>
+                        <th className="text-left px-3 py-2 w-10"></th>
+                        <th className="text-left px-3 py-2">Tool name</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(srvTools || []).filter(t => {
+                        const f = srvToolsFilter.trim().toLowerCase();
+                        if (!f) return true;
+                        return (t?.name || '').toLowerCase().includes(f);
+                      }).map(t => {
+                        const name = t.name;
+                        const checked = (srvAllowedNames || []).includes(name);
+                        return (
+                          <tr key={name} className="border-b">
+                            <td className="px-3 py-2"><input type="checkbox" checked={checked} onChange={(e)=>{
+                              const on = !!e.target.checked;
+                              setSrvAllowedNames(prev => {
+                                const set = new Set((prev || []).map(String));
+                                if (on) set.add(name); else set.delete(name);
+                                return Array.from(set);
+                              });
+                            }} /></td>
+                            <td className="px-3 py-2 text-xs font-mono">{name}</td>
+                          </tr>
+                        );
+                      })}
+                      {(!srvTools || !srvTools.length) && (
+                        <tr><td className="px-3 py-3 text-sm text-gray-500" colSpan={2}>No tools yet. Click “Load server” or “Load built‑in”.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="mt-2 flex items-center gap-2">
+                  <button className="px-2 py-1 rounded border" onClick={saveAllowedTools}>Save allowlist</button>
+                  {!!srvToolsMsg && <span className="text-[11px] text-gray-600">{srvToolsMsg}</span>}
+                  {!!srvMsg && <span className="text-[11px] text-gray-600">{srvMsg}</span>}
+                </div>
+              </div>
+            </Card>
+          )}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function CreateServerButton({ disabled, groups = [], onCreated, onGroupsRefresh }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [name, setName] = useState("");
+  const [groupId, setGroupId] = useState("");
+  const [groupName, setGroupName] = useState("");
+  const [err, setErr] = useState("");
+  const create = async () => {
+    if (!name.trim()) { setErr('Name required'); return; }
+    setBusy(true); setErr('');
+    try {
+      const body = { name: name.trim(), enabled: false, options: { name_base: name.trim() } };
+      if (groupId) body.group_id = groupId;
+      if (!groupId && groupName.trim()) body.group_name = groupName.trim();
+      const r = await fetch('/api/mcp-servers', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify(body) });
+      const j = await r.json();
+      if (!r.ok || j?.ok === false) throw new Error(j?.message || j?.error || 'create_failed');
+      setOpen(false); setName(''); setGroupId(''); setGroupName('');
+      onCreated?.(j.item?.id);
+    } catch (e) { setErr(String(e?.message || e)); } finally { setBusy(false); }
+  };
+  const createGroup = async () => {
+    const n = prompt('New group name'); if (!n) return;
+    try { await fetch('/api/mcp-groups', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify({ name: n }) }); await onGroupsRefresh?.(); } catch {}
+  };
+  if (!open) return (
+    <button className="text-xs px-2 py-1 rounded border bg-white hover:bg-gray-50" onClick={()=>setOpen(true)} disabled={disabled}>+ Add MCP</button>
+  );
+  return (
+    <div className="absolute z-50 bg-white border rounded shadow p-3 w-[320px]">
+      <div className="font-medium text-sm mb-2">New MCP Server</div>
+      <div className="space-y-2 text-sm">
+        <div>
+          <div className="text-xs text-gray-600">Name</div>
+          <input className="w-full border rounded px-2 py-1" value={name} onChange={(e)=>setName(e.target.value)} placeholder="My server" />
+        </div>
+        <div>
+          <div className="text-xs text-gray-600 mb-1">Group</div>
+          <div className="flex items-center gap-2">
+            <select className="border rounded px-2 py-1 w-full" value={groupId} onChange={(e)=>{ setGroupId(e.target.value); setGroupName(''); }}>
+              <option value="">— None —</option>
+              {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+            </select>
+            <button className="px-2 py-1 rounded border" onClick={createGroup}>New</button>
+          </div>
+          <div className="text-[11px] text-gray-500 mt-1">Or type a new group name:</div>
+          <input className="w-full border rounded px-2 py-1" value={groupName} onChange={(e)=>{ setGroupName(e.target.value); setGroupId(''); }} placeholder="New group name" />
+        </div>
+        {!!err && <div className="text-xs text-red-600">{err}</div>}
+        <div className="flex items-center justify-end gap-2">
+          <button className="text-xs px-2 py-1 rounded border bg-white hover:bg-gray-50" onClick={()=>setOpen(false)} disabled={busy}>Cancel</button>
+          <button className="text-xs px-2 py-1 rounded bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-60" onClick={create} disabled={busy || !name.trim()}>{busy?'Creating…':'Create'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
+

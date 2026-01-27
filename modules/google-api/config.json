@@ -1,0 +1,9 @@
+{
+  "id": "google-api",
+  "name": "Google API",
+  "description": "Google APIs integration.",
+  "category": "integration",
+  "version": "1.0.0",
+  "defaultInstalled": false,
+  "defaultActive": false
+}

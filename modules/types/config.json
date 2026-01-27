@@ -1,0 +1,9 @@
+{
+  "id": "types",
+  "name": "Types",
+  "description": "Shared TypeScript types.",
+  "category": "developer",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": false
+}

@@ -1,0 +1,6 @@
+{
+  "name": "gateway",
+  "version": "1.0.0",
+  "enabled": true,
+  "hooks": { "onModuleLoaded": "onModuleLoaded", "onModuleDisabled": "onModuleDisabled" }
+}

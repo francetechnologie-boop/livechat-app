@@ -1,0 +1,14 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Redirecting…</title>
+<script>
+  (function () {
+    try {
+      var qs = window.location.search || '';
+      window.location.replace('/api/oauth2/google/callback' + qs);
+    } catch (e) {
+      window.location.href = '/api/oauth2/google/callback' + (window.location.search || '');
+    }
+  })();
+</script>
+<p>Redirecting to the application…</p>

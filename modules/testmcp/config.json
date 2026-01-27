@@ -1,0 +1,10 @@
+{
+  "id": "testmcp",
+  "name": "Test MCP",
+  "description": "Minimal MCP server (NDJSON stream + tools) for testing.",
+  "category": "automation",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true
+}
+

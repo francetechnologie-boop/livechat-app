@@ -1,0 +1,9 @@
+{
+  "id": "prestashop-api",
+  "name": "PrestaShop API",
+  "description": "Integration with PrestaShop API (settings, sync hooks).",
+  "category": "integration",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true
+}

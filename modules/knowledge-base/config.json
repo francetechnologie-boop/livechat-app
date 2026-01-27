@@ -1,0 +1,9 @@
+{
+  "id": "knowledge-base",
+  "name": "Knowledge Base",
+  "description": "Help center articles and search.",
+  "category": "support",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": false
+}

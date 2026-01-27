@@ -1,0 +1,10 @@
+{
+  "id": "stripe-api",
+  "name": "Stripe API",
+  "description": "Stripe integration: transactions viewer + API keys configuration.",
+  "category": "integration",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true
+}
+

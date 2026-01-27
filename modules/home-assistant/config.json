@@ -1,0 +1,9 @@
+{
+  "id": "home-assistant",
+  "name": "Home Assistant",
+  "description": "Home Assistant integration.",
+  "category": "integration",
+  "version": "1.0.0",
+  "defaultInstalled": false,
+  "defaultActive": false
+}

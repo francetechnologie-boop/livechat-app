@@ -1,0 +1,4 @@
+curl -s -X POST -H "Content-Type: application/json" -H "X-Admin-Token: Alexcaroline12"
+-d '{"label":"Docs","hash":"https://example.com","level":0}'
+http://127.0.0.1:3010/api/sidebar/tree/add | jq
+

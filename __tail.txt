@@ -1,0 +1,80 @@
+};
+
+// Safe defaults for extras used by some modules
+const dbSchema = { useDbDedup: false, visitors: { idCol: "id", hasVisitorIdCol: true }, messages: { hasContent: true, hasMessage: false, hasContentHtml: true, hasAgentId: true } };
+async function ensureVisitorExists(_id) { return; }
+async function upsertVisitorColumns(_id, _cols) { return; }
+
+// Readiness flag
+let serverReady = false;
+
+// Server.js now avoids defining module-specific /api/* routes; modules own APIs.
+
+// Boot guard for login route: only pass-through after modules loaded
+app.post("/api/auth/login", (req, res, next) => {
+  if (!serverReady) return res.status(503).json({ error: "starting" });
+  return next();
+});
+
+// Generic helpers
+function publicBaseFromReq(req) {
+  try {
+    const proto = (req.headers["x-forwarded-proto"] || req.protocol || "http").toString();
+    const host = (req.headers["x-forwarded-host"] || req.headers["host"] || "").toString();
+    if (!host) return "";
+    return `${proto}://${host}`.replace(/\/$/, "");
+  } catch { return ""; }
+}
+
+// Initialize Auth and dynamically load modules
+try {
+  const auth = createAuthModule({ app, pool: modulePool, logToFile });
+  var authFromRequest = auth.authFromRequest;
+  var requireAuth = auth.requireAuth;
+  var requireAdmin = auth.requireAdmin;
+  __requireAdminImpl = requireAdmin;
+} catch (e) { try { logToFile("auth module init failed: " + (e?.message || e)); } catch {} }
+
+try {
+  await loadModuleHooks({ app, pool: modulePool, requireAdmin: requireAdminAuth, getSetting, setSetting, logToFile, extras: { getLogFilePath, isLogEnabled, isLogStdout, setLogStdout } });
+} catch (e) { try { logToFile("module hooks load failed: " + (e?.message || e)); } catch {} }
+
+try {
+  await loadModuleRoutes({
+    app,
+    pool: modulePool,
+    requireAuth,
+    requireAdmin: requireAdminAuth,
+    getSetting,
+    setSetting,
+    logToFile,
+    extras: { getLogFilePath, isLogEnabled, isLogStdout, setLogStdout, io, dbSchema, ensureVisitorExists, upsertVisitorColumns, sanitizeAgentHtmlServer, textToSafeHTML, getOpenaiApiKey, getMcpToken, publicBaseFromReq },
+  });
+} catch (e) { try { logToFile("module routes load failed: " + (e?.message || e)); } catch {} }
+
+/* [DECOUPLED-MODULES-BEGIN]
+// Dynamic sidebar tree (legacy, filesystem-scanned)
+// Disabled in favor of Module Manager's DB-backed sidebar endpoints.
+// try { registerSidebarRoutes(app, {}); } catch {}
+[DECOUPLED-MODULES-END] */
+
+// Mark server ready
+serverReady = true;
+
+/* ============================ START ======================================= */
+const PORT = Number(process.env.PORT || 3010);
+
+server.on("error", (err) => {
+  if (err && err.code === "EADDRINUSE") {
+    logToFile(`❌ Port ${PORT} already in use. Exiting.`);
+    process.exit(1);
+  } else {
+    throw err;
+  }
+});
+
+if (!server.listening) {
+  server.listen(PORT, "0.0.0.0", () => {
+    logToFile(`🚀 Server listening at http://0.0.0.0:${PORT}`);
+  });
+}

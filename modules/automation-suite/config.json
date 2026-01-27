@@ -1,0 +1,9 @@
+{
+  "id": "automation-suite",
+  "name": "Automation Suite",
+  "description": "Automation workflows and triggers.",
+  "category": "automation",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": false
+}

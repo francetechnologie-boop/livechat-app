@@ -1,0 +1,9 @@
+{
+  "id": "cron-management",
+  "name": "Cron Management",
+  "description": "Scheduled jobs and cron utilities.",
+  "category": "operations",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true
+}

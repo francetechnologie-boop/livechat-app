@@ -1,0 +1,200 @@
+... [trimmed 3081 lines] ...
+app.get("/api/automations/chatbots/:id/inspect", async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ error: 'bad_request' });
+    const r0 = await pool.query(`SELECT * FROM chatbot_config WHERE id_bot = $1`, [id]);
+    if (!r0.rowCount) return res.status(404).json({ error: 'not_found' });
+    const row = r0.rows[0];
+    const openai = openaiForConfig(row);
+    if (!openai || !row.assistant_id) {
+      return res.json({
+        has_openai: !!openai,
+        assistant_id: row.assistant_id || null,
+        local: {
+          name: row.name || null,
+          model: row.model || null,
+          instructions_len: (row.instructions || '').length,
+          tools: {
+            code_interpreter: !!row.tools_code_interpreter,
+            file_search: !!row.tools_file_search,
+          },
+        },
+        remote: null,
+      });
+    }
+    // Assistant (legacy) details if present
+    let asst = null; let remoteTools = [];
+    try {
+      asst = await openai.beta.assistants.retrieve(row.assistant_id);
+      remoteTools = Array.isArray(asst.tools) ? asst.tools.map((t) => t?.type) : [];
+    } catch {}
+    // Vector store info (Responses API)
+    let vsFiles = [];
+    if (row.vector_store_id) {
+      try {
+        const list = await openai.vectorStores.files.list(row.vector_store_id, { limit: 100 });
+        vsFiles = (list?.data || []).map((f) => ({ id: f.id, status: f.status }));
+      } catch {}
+    }
+    return res.json({
+      has_openai: true,
+      assistant_id: row.assistant_id,
+      local: {
+        name: row.name || null,
+        model: row.model || null,
+        instructions_len: (row.instructions || '').length,
+        instructions_preview: (row.instructions || '').slice(0, 200),
+        tools: {
+          code_interpreter: !!row.tools_code_interpreter,
+          file_search: !!row.tools_file_search,
+        },
+      },
+      remote: {
+        name: asst?.name || null,
+        model: asst?.model || null,
+        instructions_len: ((asst && asst.instructions) || '').length,
+        instructions_preview: ((asst && asst.instructions) || '').slice(0, 200),
+        tools: remoteTools,
+        vector_store_id: row.vector_store_id || null,
+        vector_store_files: vsFiles,
+      },
+      match: {
+        model: (row.model || '') === ((asst && asst.model) || ''),
+        has_code_interpreter: remoteTools.includes('code_interpreter') === !!row.tools_code_interpreter,
+        has_file_search: remoteTools.includes('file_search') === !!row.tools_file_search,
+        instructions_same_len: ((row.instructions || '').length) === ((((asst && asst.instructions) || '').length)),
+      }
+    });
+  } catch (e) {
+    logToFile(`❌ GET /api/automations/chatbots/:id/inspect: ${e.message}`);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// Force-push local config (name, instructions, tools, model) to the OpenAI assistant
+app.post("/api/automations/chatbots/:id/push", async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ error: 'bad_request' });
+    const r0 = await pool.query(`SELECT * FROM chatbot_config WHERE id_bot = $1`, [id]);
+    if (!r0.rowCount) return res.status(404).json({ error: 'not_found' });
+    const row = r0.rows[0];
+    const openai = openaiForConfig(row);
+    if (!openai || !row.assistant_id) return res.status(400).json({ error: 'openai_disabled_or_no_assistant' });
+    const tools = [];
+    if (row.tools_code_interpreter) tools.push({ type: 'code_interpreter' });
+    if (row.tools_file_search) tools.push({ type: 'file_search' });
+    const respFormat = row.response_format === 'json_object' ? { type: 'json_object' } : 'text';
+    const asst = await openai.beta.assistants.update(row.assistant_id, {
+      model: row.model || process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      name: row.name || undefined,
+      instructions: row.instructions || undefined,
+      tools: tools.length ? tools : undefined,
+      response_format: respFormat,
+    });
+    res.json({ ok: true, assistant_id: asst.id, model: asst.model, tools: asst.tools });
+  } catch (e) {
+    logToFile(`❌ POST /api/automations/chatbots/:id/push: ${e.message}`);
+    res.status(500).json({ error: 'server_error', message: e.message });
+  }
+});
+
+// Generate a reply using the Responses API (no Assistants object required)
+app.post("/api/automations/chatbots/:id/respond", async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ error: 'bad_request' });
+    const r0 = await pool.query(`SELECT * FROM chatbot_config WHERE id_bot = $1`, [id]);
+    if (!r0.rowCount) return res.status(404).json({ error: 'not_found' });
+    const row = r0.rows[0];
+    if (!row.openai_api_key) {
+      return res.status(400).json({ error: 'bad_request', message: 'openai_api_key missing in chatbot_config' });
+    }
+    const b = req.body || {};
+    const userInput = b.input ?? b.message ?? '';
+    if (!`${userInput}`.trim()) return res.status(400).json({ error: 'bad_request', message: 'input required' });
+    const fnTools = MCP.toFunctionTools(Array.isArray(row.mcp_tools) ? row.mcp_tools : null);
+    async function botNeedsAuth(botId) {
+      if (getMcpToken()) return true;
+      try {
+        const r = await pool.query(`SELECT 1 FROM chatbot_config WHERE id_bot=$1 AND COALESCE(mcp_token,'') <> '' LIMIT 1`, [botId]);
+        return !!r.rowCount;
+      } catch { return false; }
+    }
+    const needAuth = await botNeedsAuth(id);
+    const session = { authed: !needAuth };
+    let result;
+    if (fnTools && fnTools.length) {
+      result = await respondWithPromptAndTools({
+        apiKey: row.openai_api_key,
+        model: row.model,
+        promptId: row.prompt_id,
+        promptVersion: row.prompt_version,
+        input: `${userInput}`,
+        instructions: row.instructions,
+        responseFormat: row.response_format,
+        temperature: row.temperature,
+        topP: row.top_p,
+        organization: row.openai_org || undefined,
+        project: row.openai_project || undefined,
+        functionTools: fnTools,
+        onToolCall: async ({ name, arguments: args }) => {
+          const ctx = { shop_name: row.shop_name, lang_iso: row.lang_iso, id_bot: id, session };
+          return await MCP.run(name, args, ctx);
+        },
+      });
+    } else {
+      result = await respondWithPrompt({
+        apiKey: row.openai_api_key,
+        model: row.model,
+        promptId: row.prompt_id,
+        promptVersion: row.prompt_version,
+        input: `${userInput}`,
+        instructions: row.instructions,
+        toolsFileSearch: !!row.tools_file_search,
+        toolsCodeInterpreter: !!row.tools_code_interpreter,
+        vectorStoreId: row.vector_store_id,
+        responseFormat: row.response_format,
+        temperature: row.temperature,
+        topP: row.top_p,
+        organization: row.openai_org || undefined,
+        project: row.openai_project || undefined,
+      });
+    }
+    res.json({ ok: true, text: result.text, raw: result.raw });
+  } catch (e) {
+    logToFile(`❌ POST /api/automations/chatbots/:id/respond: ${e.message}`);
+    res.status(500).json({ error: 'server_error', message: e.message });
+  }
+});
+
+// Generic test endpoint allowing per-call overrides (for admin/testing only)
+app.post("/api/responses/test", async (req, res) => {
+  try {
+    const b = req.body || {};
+    const apiKey = b.apiKey || b.openai_api_key;
+    const promptId = b.promptId || b.prompt_id;
+    const promptVersion = b.promptVersion || b.prompt_version;
+    const msg = (b.message || b.content || b.input || "").trim();
+    if (!apiKey) return res.status(400).json({ error: 'bad_request', message: 'apiKey required' });
+    if (!promptId) return res.status(400).json({ error: 'bad_request', message: 'promptId required' });
+    if (!msg) return res.status(400).json({ error: 'bad_request', message: 'message/content required' });
+
+    const { text, raw } = await respondWithPrompt({
+      apiKey,
+      promptId,
+      promptVersion,
+      input: msg,
+    });
+    res.json({ ok: true, text, raw });
+  } catch (e) {
+    res.status(500).json({ error: 'server_error', message: e.message });
+  }
+});
+
+// Simple API health endpoint for frontend checks
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true, openai_ready: true });
+});
+

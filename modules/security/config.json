@@ -1,0 +1,10 @@
+{
+  "id": "security",
+  "name": "Security",
+  "description": "Security dashboard (Uptime Kuma, UFW, Cloudflare, remote Apache logs) with per-tab notes.",
+  "category": "system",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true
+}
+

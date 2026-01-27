@@ -1,0 +1,80 @@
+import "dotenv/config";
+import express from "express";
+import http from "http";
+import { Server } from "socket.io";
+import cors from "cors";
+import path from "path";
+import { fileURLToPath } from "url";
+import fs from "fs";
+import pgPkg from "pg";
+
+import { createLogger } from "./src/core/logger.js";
+import { textToSafeHTML, sanitizeAgentHtmlServer } from "./src/shared/safeHtml.js";
+import { createAuthModule } from "./src/modules/auth/index.js";
+import { loadModuleHooks, loadModuleRoutes } from "./src/modules/loader.js";
+/* [DECOUPLED-MODULES-BEGIN]
+   Legacy sidebar (filesystem-scanned) is disabled in favor of
+   Module Manager's DB-backed sidebar endpoints.
+   import { registerSidebarRoutes } from "./src/modules/sidebar.routes.js";
+   [DECOUPLED-MODULES-END] */
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Logger
+const logger = createLogger({
+  logFile: path.join(__dirname, "chat.log"),
+  defaultEnabled: !/^(0|false|no)$/i.test(process.env.LOG_ENABLED || "1"),
+  defaultStdout: /^(1|true|yes)$/i.test(process.env.LOG_STDOUT || ""),
+});
+const logToFile = (message) => logger.logToFile(message);
+const getLogFilePath = () => logger.getLogFile();
+const isLogEnabled = () => logger.isEnabled();
+const isLogStdout = () => logger.isStdout();
+const setLogStdout = (value) => logger.setStdout(value);
+
+// Global error handlers
+try {
+  process.on("uncaughtException", (e) => {
+    try { logToFile(`[uncaughtException] ${e?.stack || e}`); } catch {}
+  });
+  process.on("unhandledRejection", (e) => {
+    try { logToFile(`[unhandledRejection] ${e?.stack || e}`); } catch {}
+  });
+} catch {}
+
+// Optional PostgreSQL connection (used by modules)
+let pgPool = null;
+async function getPg() {
+  if (pgPool) return pgPool;
+  try {
+    const { Pool } = pgPkg;
+    // Load backend-local .env if DATABASE_URL not provided
+    try {
+      if (!process.env.DATABASE_URL && !process.env.PGHOST) {
+        const localEnv = path.join(__dirname, ".env");
+        if (fs.existsSync(localEnv)) {
+          const dotenv = await import("dotenv");
+          try { dotenv.config({ path: localEnv }); } catch {}
+        }
+      }
+    } catch {}
+
+    const url = String(process.env.DATABASE_URL || "").trim();
+    const enabled = !!url || !!process.env.PGHOST || !!process.env.PGDATABASE;
+    if (!enabled) return null;
+    const common = { connectionTimeoutMillis: 3000, idleTimeoutMillis: 30000 };
+    if (url) pgPool = new Pool({ connectionString: url, ...common });
+    else pgPool = new Pool({
+      host: process.env.PGHOST || "127.0.0.1",
+      port: Number(process.env.PGPORT || 5432),
+      user: process.env.PGUSER || "postgres",
+      password: process.env.PGPASSWORD || "",
+      database: process.env.PGDATABASE || "postgres",
+      ...common,
+    });
+    await pgPool.query("select 1");
+    return pgPool;
+  } catch (e) {
+    try { logToFile(`[pg] connect_failed ${e?.message || e}`); } catch {}
+    return null;

@@ -1,0 +1,16 @@
+{
+  "name": "paypal-api",
+  "version": "1.0.0",
+  "enabled": true,
+  "hasMcpTool": true,
+  "hasProfil": true,
+  "mcpTools": [
+    { "name": "paypal-api.accounts.list", "description": "List configured PayPal API accounts (admin-only)" },
+    { "name": "paypal-api.auth.test", "description": "Validate PayPal client credentials (admin-only)" },
+    { "name": "paypal-api.transactions.list", "description": "List PayPal transactions from DB (admin-only)" }
+  ],
+  "hooks": {
+    "onModuleLoaded": "onModuleLoaded",
+    "onModuleDisabled": "onModuleDisabled"
+  }
+}

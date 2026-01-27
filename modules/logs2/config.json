@@ -1,0 +1,9 @@
+{
+  "id": "logs2",
+  "name": "Logs 2",
+  "description": "Streaming logs and events.",
+  "category": "observability",
+  "version": "1.0.0",
+  "defaultInstalled": false,
+  "defaultActive": false
+}

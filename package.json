@@ -1,0 +1,13 @@
+{
+  "name": "livechat-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "module:generate": "node backend/scripts/generate-module.mjs",
+    "deploy:history": "bash scripts/deploy-history.sh",
+    "deploy:history:win": "powershell -ExecutionPolicy Bypass -File scripts/deploy-history.ps1",
+    "deploy:history:1730": "bash scripts/deploy-history.sh -t 17:30",
+    "deploy:history:win:1730": "powershell -ExecutionPolicy Bypass -File scripts/deploy-history.ps1 -Time 17:30",
+    "deploy:history:win:1730:save": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"New-Item -ItemType Directory -Force reports ^| Out-Null; scripts/deploy-history.ps1 -Time 17:30 ^| Out-File -FilePath 'reports/deploy-history-1730.txt' -Encoding utf8\""
+  }
+}

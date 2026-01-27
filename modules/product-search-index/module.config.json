@@ -1,0 +1,7 @@
+{
+  "name": "product-search-index",
+  "version": "0.1.0",
+  "enabled": true,
+  "hooks": { "onModuleLoaded": "onModuleLoaded", "onModuleDisabled": "onModuleDisabled" }
+}
+

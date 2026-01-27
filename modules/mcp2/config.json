@@ -1,0 +1,9 @@
+{
+  "id": "mcp2",
+  "name": "MCP2",
+  "description": "MCP2 admin endpoints.",
+  "category": "admin",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true
+}

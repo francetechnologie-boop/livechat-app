@@ -1,0 +1,1 @@
+cd /root/livechat-app && psql "postgresql://livechat_user:Alexcaroline12@127.0.0.1:5432/livechat" -f /root/livechat-app/modules/dev-manager/db/migrations/20251028_create_kanban_tables_and_migrate_from_settings.sql

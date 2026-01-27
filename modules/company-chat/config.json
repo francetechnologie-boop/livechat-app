@@ -1,0 +1,9 @@
+{
+  "id": "company-chat",
+  "name": "Company Chat",
+  "description": "Company chat integrations.",
+  "category": "integration",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": false
+}

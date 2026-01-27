@@ -1,0 +1,21 @@
+import React, { useEffect, useMemo, useState, useRef } from "react";
+import { RichEditor } from "@shared-modules";
+import { Chatbots, McpServers, McpDesigner, Prompts, Vectors, Files, Grabbing, Cron, Smartsupp, GoogleApi } from "./index.js";
+import { DbManager } from "../../../frontend/src/modules/db-manager";
+import { loadModuleState, saveModuleState } from "@app-lib/uiState";
+function Subnav({ subTab, setSubTab }) {
+  const Item = ({ id, label, icon }) => (
+    <button
+      onClick={() => setSubTab(id)}
+      className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left transition-colors
+        ${subTab === id ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'hover:bg-gray-50'}`}
+    >
+      <span className="text-base w-5 text-center" aria-hidden>{icon}</span>
+      <span className="text-sm">{label}</span>
+    </button>
+  );
+  return (
+    <aside className="w-64 border-r bg-white p-4">
+      <div className="text-xs uppercase tracking-wide text-gray-400 mb-2">⚙️ Automation Suite</div>
+        <Item id="hub" label="Conversation Hub" icon="💬" />
+

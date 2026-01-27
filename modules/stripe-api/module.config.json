@@ -1,0 +1,15 @@
+{
+  "name": "stripe-api",
+  "version": "1.0.0",
+  "enabled": true,
+  "hasMcpTool": true,
+  "hasProfil": true,
+  "mcpTools": [
+    { "name": "stripe-api.keys.list", "description": "List configured Stripe API key profiles (admin-only)" },
+    { "name": "stripe-api.transactions.list", "description": "List Stripe transactions (requires a selected Stripe profile)" }
+  ],
+  "hooks": {
+    "onModuleLoaded": "onModuleLoaded",
+    "onModuleDisabled": "onModuleDisabled"
+  }
+}

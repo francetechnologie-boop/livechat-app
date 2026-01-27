@@ -1,0 +1,49 @@
+name: Deadcode Lint (grabbing-sensorex)
+
+on:
+  pull_request:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  deadcode:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: livechat-app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run dependency-cruiser (backend orphans)
+        run: |
+          npx -y dependency-cruiser \
+            --config dependency-cruiser.config.cjs \
+            modules/grabbing-sensorex/backend \
+            --validate \
+            --output-type text
+
+  frontend-cycles:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: livechat-app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install madge
+        run: npm i -D madge@6
+
+      - name: Check grabbing-sensorex frontend cycles
+        run: node ./scripts/check-frontend-cycles.mjs

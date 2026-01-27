@@ -1,0 +1,40 @@
+{
+  "classify": {
+    "force": "product",
+    "path_rules": [
+      { "pattern": "^/product/", "type": "product" },
+      { "pattern": "^/(category|product-category|product_cat)/", "type": "category" }
+    ]
+  },
+  "images": {
+    "download": true,
+    "exclude_regex": [
+      "sensorex-notagline",
+      "/logo",
+      "icon",
+      "placeholder",
+      "woocommerce-placeholder",
+      "wp-content/themes",
+      "favicon",
+      "sprite"
+    ]
+  },
+  "documents": { "download": true },
+  "content": {
+    "roots": [
+      ".product .summary",
+      "#tab-description",
+      "h2:contains(Parameters)",
+      "h2:contains(Technical)",
+      "h2:contains(Product Downloads)",
+      "h2:contains(Additional Information)"
+    ],
+    "exclude": [
+      "class=\"cart\"",
+      "class=\"variations_form\"",
+      "woocommerce-Price-currencySymbol"
+    ]
+  }
+}
+
+

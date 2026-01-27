@@ -1,0 +1,220 @@
+import fs from "fs";
+import path from "path";
+// Note: JSZip is optional. We lazy-load it inside the ZIP route to avoid
+// crashing the server when the package isn't installed on the target host.
+import { spawn } from "child_process";
+import { fileURLToPath } from "url";
+
+const DEFAULT_MODULE_CATALOG = [
+  {
+    id: "knowledge-base",
+    name: "Knowledge Base",
+    description: "Publier des articles d'aide consultables depuis le widget.",
+    category: "support",
+    version: "1.0.0",
+    source: "builtin",
+    defaultInstalled: true,
+    defaultActive: false,
+  },
+  {
+    id: "automation-suite",
+    name: "Automation Suite",
+    description: "Déclencher des scénarios automatiques pour qualifier les visiteurs.",
+    category: "automation",
+    version: "1.0.0",
+    source: "builtin",
+    defaultInstalled: true,
+    defaultActive: false,
+  },
+  {
+    id: "advanced-analytics",
+    name: "Analytique avancée",
+    description: "Suivre les performances de l'équipe et les conversions.",
+    category: "analytics",
+    version: "1.0.0",
+    source: "builtin",
+    defaultInstalled: true,
+    defaultActive: false,
+  },
+];
+
+const MODULES_SETTING_KEY = "MODULE_MANAGER_STATE";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const DEFAULT_MANIFEST_DIRS = [
+  { dir: path.resolve(__dirname, ".."), location: "backend" },
+  {
+    dir: path.resolve(__dirname, "../../../frontend/src/modules"),
+    location: "frontend",
+  },
+  {
+    dir: path.resolve(__dirname, "../../../modules"),
+    location: "module-root",
+  },
+  {
+    dir: path.resolve(__dirname, "../../../config/modules"),
+    location: "legacy",
+  },
+];
+
+const EXTRA_MANIFEST_DIRS = (process.env.MODULE_MANIFEST_DIRS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean)
+  .map((dir, index) => ({
+    dir: path.resolve(dir),
+    location: `custom${index ? `_${index + 1}` : ""}`,
+  }));
+
+const MANIFEST_DIRS = [...DEFAULT_MANIFEST_DIRS, ...EXTRA_MANIFEST_DIRS];
+const MANIFEST_FILE_NAMES = ["config.json", "manifest.json"];
+
+let catalogCache = null;
+let modulePool = null;
+let modulesTypeCache = null; // { active: 'smallint'|'boolean', install: 'smallint'|'boolean' }
+let ensureModulesTablePromise = null;
+
+function normaliseCatalogEntry(entry = {}, origin = {}) {
+  if (!entry || typeof entry !== "object") return null;
+  const id = String(entry.id || "").trim();
+  if (!id) return null;
+  const locations = new Set(
+    Array.isArray(entry.locations) ? entry.locations.map((l) => String(l)) : []
+  );
+  if (origin.location) locations.add(origin.location);
+
+  const manifestPaths = new Set(
+    Array.isArray(entry.manifestPaths)
+      ? entry.manifestPaths.map((p) => String(p))
+      : []
+  );
+  if (origin.manifestPath) manifestPaths.add(origin.manifestPath);
+
+  const moduleDirs = new Set(
+    Array.isArray(entry.moduleDirs)
+      ? entry.moduleDirs.map((p) => String(p))
+      : []
+  );
+  if (origin.moduleDir) moduleDirs.add(origin.moduleDir);
+
+  const tagValues = Array.isArray(entry.tags)
+    ? entry.tags.map((t) => String(t).trim()).filter(Boolean)
+    : [];
+  const tags = tagValues.length ? tagValues : undefined;
+
+  const paths =
+    entry.paths && typeof entry.paths === "object"
+      ? Object.fromEntries(
+          Object.entries(entry.paths).map(([k, v]) => [String(k), String(v)])
+        )
+      : undefined;
+
+  const locationsArray = Array.from(locations);
+  const manifestPathArray = Array.from(manifestPaths);
+  const moduleDirArray = Array.from(moduleDirs);
+
+  return {
+    id,
+    name: String(entry.name || id).trim(),
+    description: String(entry.description || "").trim(),
+    category: String(entry.category || "custom").trim() || "custom",
+    version: entry.version ? String(entry.version) : null,
+    source: entry.source || origin.source || "manifest",
+    tags,
+    defaultInstalled: entry.defaultInstalled === true,
+    defaultActive: entry.defaultActive === true,
+    locations: locationsArray.length ? locationsArray : undefined,
+    hasBackend: entry.hasBackend === true || origin.location === "backend",
+    hasFrontend: entry.hasFrontend === true || origin.location === "frontend",
+    manifestPaths: manifestPathArray.length ? manifestPathArray : undefined,
+    moduleDirs: moduleDirArray.length ? moduleDirArray : undefined,
+    paths,
+  };
+}
+
+function mergeCatalogEntries(target, incoming) {
+  const uniqueMerge = (a = [], b = []) =>
+    Array.from(new Set([...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])]));
+
+  const mergedLocations = uniqueMerge(target.locations, incoming.locations);
+  target.locations = mergedLocations.length ? mergedLocations : undefined;
+
+  const mergedManifestPaths = uniqueMerge(
+    target.manifestPaths,
+    incoming.manifestPaths
+  );
+  target.manifestPaths = mergedManifestPaths.length ? mergedManifestPaths : undefined;
+
+  const mergedModuleDirs = uniqueMerge(target.moduleDirs, incoming.moduleDirs);
+  target.moduleDirs = mergedModuleDirs.length ? mergedModuleDirs : undefined;
+  const mergedTags = uniqueMerge(target.tags, incoming.tags);
+  target.tags = mergedTags.length ? mergedTags : undefined;
+
+  target.hasBackend = target.hasBackend || incoming.hasBackend;
+  target.hasFrontend = target.hasFrontend || incoming.hasFrontend;
+
+  const fill = (key) => {
+    if (!target[key] && incoming[key]) target[key] = incoming[key];
+  };
+  fill("name");
+  fill("description");
+  fill("category");
+  fill("version");
+  fill("source");
+  fill("database");
+
+  target.defaultInstalled = target.defaultInstalled || incoming.defaultInstalled;
+  target.defaultActive = target.defaultActive || incoming.defaultActive;
+
+  if (incoming.paths) {
+    target.paths = { ...(target.paths || {}), ...incoming.paths };
+  }
+}
+
+function loadCatalogFromManifests(logToFile) {
+  const byId = new Map();
+
+  for (const { dir, location } of MANIFEST_DIRS) {
+    if (!dir || !fs.existsSync(dir)) continue;
+
+    let filesRead = 0;
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (err) {
+      logToFile?.(`⚠️ module-manifest directory error (${dir}): ${err.message}`);
+      continue;
+    }
+
+    for (const entry of entries) {
+      const candidates = [];
+      if (entry.isDirectory()) {
+        const moduleDir = path.join(dir, entry.name);
+        for (const fileName of MANIFEST_FILE_NAMES) {
+          const candidate = path.join(moduleDir, fileName);
+          if (fs.existsSync(candidate)) {
+            candidates.push({ manifestPath: candidate, moduleDir });
+          }
+        }
+      } else if (entry.isFile() && MANIFEST_FILE_NAMES.includes(entry.name)) {
+        candidates.push({ manifestPath: path.join(dir, entry.name), moduleDir: dir });
+      }
+
+      for (const candidate of candidates) {
+        try {
+          const raw = fs.readFileSync(candidate.manifestPath, "utf8");
+          const parsed = JSON.parse(raw);
+          const normalized = normaliseCatalogEntry(parsed, {
+            location,
+            manifestPath: candidate.manifestPath,
+            moduleDir: candidate.moduleDir,
+            source: parsed?.source,
+          });
+          if (!normalized) continue;
+
+          try {
+            const backendDir = path.join(candidate.moduleDir, "backend");
+            const frontendDir = path.join(candidate.moduleDir, "frontend");
+            if (!normalized.hasBackend && fs.existsSync(backendDir)) {
+              normalized.hasBackend = true;

@@ -1,0 +1,46 @@
+{
+  "items": [
+    {
+      "name": "ping",
+      "description": "Responds with ok:true",
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      }
+    },
+    {
+      "name": "time.now",
+      "description": "Returns ISO timestamp",
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      }
+    },
+    {
+      "name": "random.int",
+      "description": "Random integer in [min,max]",
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "min": { "type": "integer", "default": 1 },
+          "max": { "type": "integer", "default": 100 }
+        }
+      }
+    },
+    {
+      "name": "echo",
+      "description": "Echo back a message",
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "text": { "type": "string" }
+        }
+      }
+    }
+  ]
+}
+

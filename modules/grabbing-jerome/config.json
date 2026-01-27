@@ -1,0 +1,11 @@
+{
+  "id": "grabbing-jerome",
+  "name": "Grabbing Jerome",
+  "description": "Jerome-specific grabbing tools and domain management",
+  "category": "automation",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true,
+  "surfaces": { "main": "Grabbing Jerome" },
+  "defaultSurface": "main"
+}

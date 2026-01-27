@@ -1,0 +1,11 @@
+{
+  "id": "conversation-hub",
+  "name": "Conversation Hub",
+  "description": "Conversations, messages, and visitor context.",
+  "category": "core",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true,
+  "surfaces": { "hub": "Conversation Hub" },
+  "defaultSurface": "hub"
+}

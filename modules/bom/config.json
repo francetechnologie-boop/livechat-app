@@ -1,0 +1,12 @@
+{
+  "id": "bom",
+  "name": "Bill of Materials",
+  "description": "Manage suppliers, items, and BOMs (bill of materials).",
+  "category": "automation",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true,
+  "surfaces": { "main": "BOM" },
+  "defaultSurface": "main"
+}
+

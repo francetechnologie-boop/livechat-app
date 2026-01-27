@@ -1,0 +1,10 @@
+{
+  "id": "grabbing-zasilkovna",
+  "name": "Grabbing Zasilkovna",
+  "description": "Packeta/Zásilkovna CSV utilities as a standalone module.",
+  "category": "automation",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true
+}
+

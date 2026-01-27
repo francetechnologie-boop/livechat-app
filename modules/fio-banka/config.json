@@ -1,0 +1,10 @@
+{
+  "id": "fio-banka",
+  "name": "FIO Banka",
+  "description": "Fio banka integration: store API tokens per org and sync bank account transactions.",
+  "category": "integration",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true
+}
+

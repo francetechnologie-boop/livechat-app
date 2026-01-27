@@ -1,0 +1,197 @@
+{
+  "ok": true,
+  "tables": [
+    "X_modules",
+    "X_sidebar_entries",
+    "app_file",
+    "app_file_category_map",
+    "assignments",
+    "assistant_threads",
+    "audit_log",
+    "auto_messages",
+    "call_logs",
+    "chatbot_config",
+    "chatbot_welcome_link",
+    "company_chat_feedback",
+    "company_chat_messages",
+    "cron_job",
+    "file_category",
+    "gateway_lines",
+    "grabbing_config",
+    "grabbing_zasilkovna",
+    "hook_module",
+    "hooks",
+    "hub_bot_map",
+    "invitations",
+    "local_prompt",
+    "mcp2_kind",
+    "mcp2_server",
+    "mcp2_server_tool",
+    "mcp2_tool",
+    "mcp2_type",
+    "mcp2_type_tool",
+    "mcp_files",
+    "mcp_group",
+    "mcp_server_config",
+    "mcp_tool_def",
+    "memberships",
+    "messages",
+    "migrations_log",
+    "mod_agents_agents",
+    "mod_agents_memberships",
+    "mod_agents_preferences",
+    "mod_agents_roles",
+    "mod_automation_suite_config",
+    "mod_cron_management_jobs",
+    "mod_cron_management_logs",
+    "mod_db_manager_profiles",
+    "mod_db_manager_view_change_log",
+    "mod_google_api_settings",
+    "mod_google_api_tokens",
+    "mod_grabbing_config",
+    "mod_grabbing_jerome_domain_config_history",
+    "mod_grabbing_jerome_domain_config_transfert_history",
+    "mod_grabbing_jerome_domains",
+    "mod_grabbing_jerome_domains_url",
+    "mod_grabbing_jerome_domains_url_page_explore",
+    "mod_grabbing_jerome_domains_url_ready_transfert",
+    "mod_grabbing_jerome_extracts",
+    "mod_grabbing_jerome_queue",
+    "mod_grabbing_jerome_transfers",
+    "mod_grabbing_zasilkovna",
+    "mod_module_manager_modules",
+    "mod_module_manager_sidebar_entries",
+    "mod_nohash_modules",
+    "mod_nohash_pages",
+    "mod_nohash_routes",
+    "mod_smartsupp_api_settings",
+    "organizations",
+    "permissions",
+    "prompt_config",
+    "prompt_config_mcp",
+    "prompt_config_mcp2",
+    "prompt_test_history",
+    "resource_acl",
+    "role_permissions",
+    "roles",
+    "schema_migrations",
+    "settings",
+    "sms_conversation",
+    "sms_status",
+    "team_members",
+    "teams",
+    "users",
+    "visitor_visits",
+    "visitors",
+    "visits",
+    "welcome_message"
+  ],
+  "modules": [
+    {
+      "id": "agents",
+      "snake": "agents"
+    },
+    {
+      "id": "automation-suite",
+      "snake": "automation_suite"
+    },
+    {
+      "id": "chat",
+      "snake": "chat"
+    },
+    {
+      "id": "company-chat",
+      "snake": "company_chat"
+    },
+    {
+      "id": "cron-management",
+      "snake": "cron_management"
+    },
+    {
+      "id": "dev-manager",
+      "snake": "dev_manager"
+    },
+    {
+      "id": "google-api",
+      "snake": "google_api"
+    },
+    {
+      "id": "grabbing",
+      "snake": "grabbing"
+    },
+    {
+      "id": "home-assistant",
+      "snake": "home_assistant"
+    },
+    {
+      "id": "knowledge-base",
+      "snake": "knowledge_base"
+    },
+    {
+      "id": "logs2",
+      "snake": "logs2"
+    },
+    {
+      "id": "module-manager",
+      "snake": "module_manager"
+    },
+    {
+      "id": "module-template",
+      "snake": "module_template"
+    },
+    {
+      "id": "nohash",
+      "snake": "nohash"
+    },
+    {
+      "id": "shared",
+      "snake": "shared"
+    },
+    {
+      "id": "smartsupp-api",
+      "snake": "smartsupp_api"
+    },
+    {
+      "id": "system",
+      "snake": "system"
+    },
+    {
+      "id": "tools",
+      "snake": "tools"
+    },
+    {
+      "id": "types",
+      "snake": "types"
+    },
+    {
+      "id": "visitor-list",
+      "snake": "visitor_list"
+    }
+  ],
+  "renames": [
+    {
+      "module": "chat",
+      "from": "company_chat_feedback",
+      "to": "mod_chat_company_chat_feedback",
+      "createView": true
+    },
+    {
+      "module": "chat",
+      "from": "company_chat_messages",
+      "to": "mod_chat_company_chat_messages",
+      "createView": true
+    },
+    {
+      "module": "grabbing",
+      "from": "grabbing_config",
+      "to": "mod_grabbing_config",
+      "createView": true
+    },
+    {
+      "module": "grabbing",
+      "from": "grabbing_zasilkovna",
+      "to": "mod_grabbing_zasilkovna",
+      "createView": true
+    }
+  ]
+}

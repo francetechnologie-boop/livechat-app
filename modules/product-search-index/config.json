@@ -1,0 +1,10 @@
+{
+  "id": "product-search-index",
+  "name": "Product Search Index",
+  "description": "Build/refresh PrestaShop product search_word and search_index tables from product names and references.",
+  "category": "prestashop",
+  "version": "0.1.0",
+  "defaultInstalled": true,
+  "defaultActive": true
+}
+

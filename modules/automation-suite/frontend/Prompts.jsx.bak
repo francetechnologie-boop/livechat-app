@@ -1,0 +1,419 @@
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
+
+function Field({ label, children, hint }) {
+  return (
+    <div className="space-y-1">
+      <div className="text-xs text-gray-600">{label}</div>
+      <div>{children}</div>
+      {hint ? <div className="text-[11px] text-gray-500">{hint}</div> : null}
+    </div>
+  );
+}
+
+function MaskedSecret({ value, copyLabel = "Copy" }) {
+  const [show, setShow] = useState(false);
+  if (!value) return <span className="text-[12px] text-gray-500">(none)</span>;
+  return (
+    <span className="inline-flex items-center gap-2">
+      <code className="px-1 py-0.5 bg-gray-50 border rounded mr-1">
+        {show ? value : "••••••••••••••"}
+      </code>
+      <button
+        className="text-[11px] px-1 py-0.5 border rounded"
+        onClick={() => setShow((v) => !v)}
+      >
+        {show ? "Hide" : "Show"}
+      </button>
+      <button
+        className="text-[11px] px-1 py-0.5 border rounded"
+        onClick={() => navigator.clipboard.writeText(value)}
+      >
+        {copyLabel}
+      </button>
+    </span>
+  );
+}
+
+export default function Prompts() {
+  const API_BASE = (() => {
+    try {
+      const p = window.location?.pathname || '';
+      if (p.startsWith('/mcp-dev-prestashop/')) return '/mcp-dev-prestashop';
+      if (p.startsWith('/mcp/')) return '/mcp';
+    } catch {}
+    return '/api';
+  })();
+  // Two-pane editor state
+  const [note] = useState('Local Prompt repository — reusable across chatbots.');
+  const [bots, setBots] = useState([]);
+  const [items, setItems] = useState([]);
+  const [selectedId, setSelectedId] = useState('');
+  const [loadingList, setLoadingList] = useState(false);
+  const [form, setForm] = useState({ name:'', dev_message:'', openai_api_key:'', prompt_id:'', prompt_version:'', vector_store_id:'', messages: [], tools: { file_search:false, code_interpreter:false, function:false, web_search:false } });
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [assignBusy, setAssignBusy] = useState(false);
+  const [assigned, setAssigned] = useState([]); // chatbot_ids
+  const [assignSel, setAssignSel] = useState({}); // id_bot -> boolean
+  const [testMsg, setTestMsg] = useState('');
+  const [testBusy, setTestBusy] = useState(false);
+  const [testOut, setTestOut] = useState('');
+  const [testReq, setTestReq] = useState('');
+
+  // Organization OpenAI key presence (display-only)
+  const [orgHasKey, setOrgHasKey] = useState(false);
+  useEffect(() => {
+    (async () => {
+      try { const r = await fetch('/api/orgs/me', { credentials:'include' }); const j = await r.json(); if (r.ok && j?.ok && j.item) setOrgHasKey(!!j.item.has_key); } catch {}
+    })();
+  }, []);
+
+  // MCP servers association (per prompt)
+  const [srvList, setSrvList] = useState([]);
+  const [srvLoading, setSrvLoading] = useState(false);
+  const [srvAssigned, setSrvAssigned] = useState([]); // array of mcp_server_id
+  const [srvSel, setSrvSel] = useState({}); // id -> boolean
+  const [srvAssignBusy, setSrvAssignBusy] = useState(false);
+  const [srvLinked, setSrvLinked] = useState([]);
+  const [srvLinkedBusy, setSrvLinkedBusy] = useState(false);
+  // Link a saved MCP server to this prompt
+  const [srvLinkSel, setSrvLinkSel] = useState('');
+  const [srvLinkBusy, setSrvLinkBusy] = useState(false);
+  // Upload to a linked MCP server
+  const [srvUploadTarget, setSrvUploadTarget] = useState('');
+
+  const [srvUploadMsg, setSrvUploadMsg] = useState('');
+  // Upload selection/state for linked MCP server uploads
+  const [srvUploadFiles, setSrvUploadFiles] = useState([]);
+  const [srvUploading, setSrvUploading] = useState(false);
+  // Files per linked server
+  const [srvFiles, setSrvFiles] = useState({}); // { [serverId]: { loading, files, error } }
+  const [srvExpanded, setSrvExpanded] = useState(new Set());
+  const [srvAllowed, setSrvAllowed] = useState({}); // { [serverId]: Set(toolNames) }
+  const [srvTransport, setSrvTransport] = useState({}); // { [serverId]: 'sse' | 'stream' }
+  // Whether to call legacy admin endpoints to fetch tokens when a server token is missing
+  const [useAdminTokenFallback, setUseAdminTokenFallback] = useState(() => {
+    try { return localStorage.getItem('useAdminMcpTokenFallback') === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { if (useAdminTokenFallback) localStorage.setItem('useAdminMcpTokenFallback','1'); else localStorage.removeItem('useAdminMcpTokenFallback'); } catch {}
+  }, [useAdminTokenFallback]);
+  const copy = async (text) => { try { await navigator.clipboard.writeText(String(text || '')); } catch {} };
+  const formatBytes = (b) => {
+    const n = Number(b || 0);
+    if (!isFinite(n)) return '';
+    if (n < 1024) return `${n} B`;
+    const units = ['KB','MB','GB','TB'];
+    let v = n; let i = -1; do { v /= 1024; i++; } while (v >= 1024 && i < units.length-1);
+    return `${v.toFixed(1)} ${units[i]}`;
+  };
+  const formatIso = (iso) => { try { return new Date(iso).toLocaleString(); } catch { return ''; } };
+  const serverPathForKind = (kind) => (String(kind||'').toLowerCase()==='dev' ? '/mcp-dev' : '/mcp');
+  const buildServerUrl = (s, path) => {
+    const base = (s?.http_base && /^https?:\/\//i.test(s.http_base)) ? s.http_base.replace(/\/$/, '') : '';
+    return base ? `${base}${path}` : path;
+  };
+  const getServerToken = (s) => {
+    try { const saved = (srvList || []).find(x => x.id === s.id); return saved?.token || ''; } catch { return ''; }
+  };
+  const loadFilesForServer = async (s) => {
+    if (!s || !s.id) return;
+    setSrvFiles((m)=>({ ...m, [s.id]: { ...(m[s.id]||{}), loading:true, error:'' } }));
+    try {
+      const kind = String(s.kind || '').toLowerCase();
+      if (kind === 'dev-prestashop') {
+        setSrvFiles((m)=>({ ...m, [s.id]: { loading:false, files:[], error:'Files not supported for PrestaShop dev' } }));
+        return;
+      }
+      const basePath = serverPathForKind(kind);
+      const urlPath = `${basePath}/files?limit=50`;
+      let token = getServerToken(s);
+      if (useAdminTokenFallback && !token) {
+        try {
+          const url = kind === 'dev' ? '/api/admin/mcp-dev/token' : '/api/admin/mcp/token';
+          const rTok = await fetch(url, { credentials:'include' });
+          const jTok = await rTok.json();
+          if (rTok.ok && jTok?.ok != null) token = jTok.token || '';
+        } catch {}
+      }
+      let url = buildServerUrl(s, urlPath);
+      const sep = url.includes('?') ? '&' : '?';
+      if (token) url = `${url}${sep}token=${encodeURIComponent(token)}`;
+      let creds = 'include';
+      try { const uo = new URL(url, window.location.href); if (uo.origin !== window.location.origin) creds = 'omit'; } catch {}
+      const r = await fetch(url, { credentials: creds });
+      const j = await r.json().catch(()=>({}));
+      if (!r.ok || j?.ok === false) throw new Error(j?.message || j?.error || `http_${r.status}`);
+      const files = Array.isArray(j.files) ? j.files : [];
+      setSrvFiles((m)=>({ ...m, [s.id]: { loading:false, files, error:'' } }));
+    } catch (e) {
+      setSrvFiles((m)=>({ ...m, [s.id]: { loading:false, files:(m[s.id]?.files||[]), error: String(e?.message || e) } }));
+    }
+  };
+  const downloadUrlFor = (s, fileId) => {
+    const kind = String(s.kind || '').toLowerCase();
+    const basePath = serverPathForKind(kind);
+    const token = getServerToken(s);
+    let url = buildServerUrl(s, `${basePath}/file/${encodeURIComponent(fileId)}/download`);
+    if (token) url += (url.includes('?') ? '&' : '?') + `token=${encodeURIComponent(token)}`;
+    return url;
+  };
+
+  // Load chatbots and prompt list
+  const loadBots = async () => {
+    try { const r = await fetch(`${API_BASE}/automations/chatbots`, { credentials:'include' }); const j = await r.json(); setBots(Array.isArray(j) ? j : []); } catch {}
+  };
+  const loadPrompts = async () => {
+    setLoadingList(true);
+    try { const r = await fetch(`${API_BASE}/prompt-configs`, { credentials:'include' }); const j = await r.json(); if (r.ok && j?.ok) setItems(Array.isArray(j.items)? j.items: []); } catch {}
+    finally { setLoadingList(false); }
+  };
+  const loadServers = async () => {
+    setSrvLoading(true);
+    try {
+      const r = await fetch(`/api/mcp-servers`, { credentials: 'include' });
+      const j = await r.json();
+      setSrvList(r.ok && j?.ok ? (Array.isArray(j.items) ? j.items : []) : []);
+    } catch { setSrvList([]); }
+    finally { setSrvLoading(false); }
+  };
+  useEffect(()=>{ loadBots(); loadPrompts(); loadServers(); }, []);
+  // Auto-load linked MCP servers when a prompt is selected
+  useEffect(() => {
+    (async () => {
+      if (!selectedId) { setSrvLinked([]); setSrvAllowed({}); setSrvTransport({}); return; }
+      try {
+        setSrvLinkedBusy(true);
+        const r = await fetch(`/api/prompt-configs/${encodeURIComponent(selectedId)}/mcp-servers`, { credentials:'include' });
+        const j = await r.json();
+        const list = r.ok && j?.ok ? (Array.isArray(j.servers) ? j.servers : []) : [];
+        setSrvLinked(list);
+        const map = {}; const tmap = {};
+        list.forEach(s=>{ const def = Array.isArray(s.allowed_tools) ? s.allowed_tools : (Array.isArray(s.tools)? s.tools.map(t=>t.name): []); map[s.id] = new Set(def); const pref = (s.options && typeof s.options==='object' && s.options.server_url_pref==='stream') ? 'stream' : 'sse'; tmap[s.id] = pref; });
+        setSrvAllowed(map); setSrvTransport(tmap);
+      } catch { setSrvLinked([]); }
+      finally { setSrvLinkedBusy(false); }
+    })();
+  }, [selectedId]);
+  // Compute available MCP servers (not yet linked to this prompt)
+  const availableServers = useMemo(() => {
+    try {
+      const linkedIds = new Set((srvLinked || []).map(s => s && s.id));
+      return (srvList || []).filter(sv => sv && !linkedIds.has(sv.id));
+    } catch { return srvList || []; }
+  }, [srvList, srvLinked]);
+
+  const linkServer = async (id) => {
+    if (!selectedId || !id) return;
+    setSrvLinkBusy(true);
+    try {
+      const r = await fetch(`/api/prompt-configs/${encodeURIComponent(selectedId)}/mcp-servers/assign`, {
+        method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify({ server_ids: [id] })
+      });
+      if (!r.ok) {
+        try { const j = await r.json(); alert(j?.message || j?.error || 'Link failed'); } catch { alert('Link failed'); }
+      }
+      try {
+        setSrvLinkedBusy(true);
+        const rr = await fetch(`/api/prompt-configs/${encodeURIComponent(selectedId)}/mcp-servers`, { credentials:'include' });
+        const jj = await rr.json();
+        const list = rr.ok && jj?.ok ? (Array.isArray(jj.servers) ? jj.servers : []) : [];
+        setSrvLinked(list);
+      } catch { setSrvLinked([]); } finally { setSrvLinkedBusy(false); }
+    } catch (e) { alert(String(e?.message || e)); } finally { setSrvLinkBusy(false); }
+  };
+
+  // Abort management for pick() fetches
+  const pickAbortRef = useRef(null);
+
+  const pick = async (id) => {
+    // cancel previous in-flight
+    try { pickAbortRef.current?.abort(); } catch {}
+    const ac = new AbortController();
+    pickAbortRef.current = ac;
+
+    setSelectedId(id);
+    if (!id) {
+      setForm({ name:'', dev_message:'', openai_api_key:'', prompt_id:'', prompt_version:'', vector_store_id:'', messages: [], tools:{ file_search:false, code_interpreter:false, function:false, web_search:false } });
+      setAssigned([]);
+      setAssignSel({});
+      return;
+    }
+    try {
+      const r = await fetch(`${API_BASE}/prompt-configs/${encodeURIComponent(id)}`, { credentials:'include', signal: ac.signal });
+      const j = await r.json();
+      if (r.ok && j?.ok) {
+        const it = j.item;
+        // ensure stable IDs for messages
+        const msgs = Array.isArray(it.messages) ? it.messages.map(m => ({
+          id: m.id || (crypto.randomUUID?.() || String(Date.now() + Math.random())),
+          role: m.role || 'user',
+          content: m.content || ''
+        })) : [];
+        setForm({
+          name: it.name||'',
+          dev_message: it.dev_message||'',
+          openai_api_key: it.openai_api_key||'',
+          prompt_id: it.prompt_id||'',
+          prompt_version: it.prompt_version||'',
+          vector_store_id: it.vector_store_id||'',
+          messages: msgs,
+          tools: {
+            file_search: !!(it.tools && it.tools.file_search),
+            code_interpreter: !!(it.tools && it.tools.code_interpreter),
+            function: !!(it.tools && it.tools.function),
+            web_search: !!(it.tools && it.tools.web_search),
+          },
+        });
+      }
+    } catch {}
+    try {
+      const r2 = await fetch(`${API_BASE}/prompt-configs/${encodeURIComponent(id)}/chatbots`, { credentials:'include', signal: ac.signal });
+      const j2 = await r2.json();
+      if (r2.ok && j2?.ok) { setAssigned(Array.isArray(j2.chatbot_ids)? j2.chatbot_ids: []); const map={}; (j2.chatbot_ids||[]).forEach(x=>map[x]=true); setAssignSel(map); }
+    } catch {}
+    // Load associated MCP servers
+    try {
+      const r3 = await fetch(`/api/prompt-configs/${encodeURIComponent(id)}/mcp-servers`, { credentials:'include', signal: ac.signal });
+      const j3 = await r3.json();
+      if (r3.ok && j3?.ok) {
+        const list = Array.isArray(j3.servers) ? j3.servers : [];
+        setSrvLinked(list);
+        const ids = list.map(s => s.id);
+        setSrvAssigned(ids);
+        const smap = {}; ids.forEach(x => smap[x] = true); setSrvSel(smap);
+      } else { setSrvLinked([]); setSrvAssigned([]); setSrvSel({}); }
+    } catch { setSrvLinked([]); setSrvAssigned([]); setSrvSel({}); }
+  };
+
+  const createNew = async () => {
+    const name = prompt('Prompt name');
+    if (!name) return;
+    try {
+      const r = await fetch(`${API_BASE}/prompt-configs`, { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify({ name }) });
+      const j = await r.json();
+      if (r.ok && j?.ok) { await loadPrompts(); pick(j.item.id); }
+      else alert('Create failed');
+    } catch (e) { alert('Create failed: ' + (e?.message || e)); }
+  };
+  const saveServerAssignments = async () => {
+    if (!selectedId) { alert('Select a prompt first'); return; }
+    setSrvAssignBusy(true);
+    try {
+      const want = Object.entries(srvSel).filter(([,v])=>!!v).map(([k])=>k);
+      const curr = new Set(srvAssigned);
+      const add = want.filter(id=>!curr.has(id));
+      const rem = srvAssigned.filter(id=>!want.includes(id));
+      if (add.length) await fetch(`/api/prompt-configs/${encodeURIComponent(selectedId)}/mcp-servers/assign`, { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify({ server_ids: add }) });
+      if (rem.length) await fetch(`/api/prompt-configs/${encodeURIComponent(selectedId)}/mcp-servers/unassign`, { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify({ server_ids: rem }) });
+      setSrvAssigned(want);
+      // reload linked details
+      try {
+        setSrvLinkedBusy(true);
+        const r = await fetch(`/api/prompt-configs/${encodeURIComponent(selectedId)}/mcp-servers`, { credentials:'include' });
+        const j = await r.json();
+        setSrvLinked(r.ok && j?.ok ? (Array.isArray(j.servers) ? j.servers : []) : []);
+      } catch { setSrvLinked([]); }
+      finally { setSrvLinkedBusy(false); }
+    } catch (e) { alert('Save failed: ' + (e?.message || e)); }
+    finally { setSrvAssignBusy(false); }
+  };
+  const savePrompt = async () => {
+    if (!selectedId) { alert('Select a prompt first'); return; }
+    setSaving(true);
+    try {
+      const r = await fetch(`${API_BASE}/prompt-configs/${encodeURIComponent(selectedId)}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify(form) });
+      const j = await r.json();
+      if (!r.ok || !j?.ok) throw new Error(j?.message || j?.error || 'save_failed');
+      await loadPrompts();
+    } catch (e) { alert('Save failed: ' + (e?.message || e)); }
+    finally { setSaving(false); }
+  };
+  const addMsg = () => setForm(f => ({ ...f, messages: [ ...(Array.isArray(f.messages)? f.messages: []), { id: crypto.randomUUID?.() || String(Date.now()+Math.random()), role:'user', content:'' } ] }));
+  const updateMsg = (idx, patch) => setForm(f => {
+    const arr = Array.isArray(f.messages)? [...f.messages]: [];
+    arr[idx] = { ...(arr[idx]||{ role:'user', content:'' }), ...patch };
+    return { ...f, messages: arr };
+  });
+  const removeMsg = (idx) => setForm(f => {
+    const arr = Array.isArray(f.messages)? [...f.messages]: [];
+    arr.splice(idx,1);
+    return { ...f, messages: arr };
+  });
+  const moveMsg = (idx, dir) => setForm(f => {
+    const arr = Array.isArray(f.messages)? [...f.messages]: [];
+    const j = idx + dir; if (j<0 || j>=arr.length) return f;
+    const tmp = arr[idx]; arr[idx] = arr[j]; arr[j] = tmp;
+    return { ...f, messages: arr };
+  });
+  const copyOpenAIJson = async () => {
+    const payload = { developer_message: form.dev_message || '', messages: Array.isArray(form.messages)? form.messages: [], tools: form.tools || {} };
+    try { await navigator.clipboard.writeText(JSON.stringify(payload, null, 2)); alert('Copied.'); } catch { alert('Copy failed'); }
+  };
+  const deletePrompt = async () => {
+    if (!selectedId) return; if (!confirm('Delete this prompt?')) return;
+    setDeleting(true);
+    try { const r = await fetch(`${API_BASE}/prompt-configs/${encodeURIComponent(selectedId)}`, { method:'DELETE', credentials:'include' }); if (!r.ok) throw new Error('delete_failed'); setSelectedId(''); await loadPrompts(); }
+    catch (e) { alert('Delete failed: ' + (e?.message || e)); }
+    finally { setDeleting(false); }
+  };
+  const saveAssignments = async () => {
+    if (!selectedId) { alert('Select a prompt first'); return; }
+    setAssignBusy(true);
+    try {
+      const want = Object.entries(assignSel).filter(([,v])=>!!v).map(([k])=>k);
+      const curr = new Set(assigned);
+      const add = want.filter(id=>!curr.has(id));
+      const rem = assigned.filter(id=>!want.includes(id));
+      if (add.length) await fetch(`${API_BASE}/prompt-configs/${encodeURIComponent(selectedId)}/assign`, { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify({ chatbot_ids: add }) });
+      if (rem.length) await fetch(`${API_BASE}/prompt-configs/${encodeURIComponent(selectedId)}/unassign`, { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify({ chatbot_ids: rem }) });
+      setAssigned(want);
+    } catch (e) { alert('Assign failed: ' + (e?.message || e)); }
+    finally { setAssignBusy(false); }
+  };
+
+  const testThisPrompt = async () => {
+    if (!selectedId) { alert('Select a prompt first'); return; }
+    if (!testMsg.trim()) { alert('Enter a message'); return; }
+    setTestBusy(true); setTestOut(''); setTestReq('');
+    try {
+      const r = await fetch(`${API_BASE}/prompt-configs/${encodeURIComponent(selectedId)}/test`, { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body: JSON.stringify({ input: testMsg }) });
+      const j = await r.json();
+      if (r.ok && j?.ok) {
+        setTestOut(j.text || JSON.stringify(j));
+        try { setTestReq(JSON.stringify(j.request_body || j.request || {}, null, 2)); } catch { setTestReq(''); }
+      } else {
+        setTestOut(j?.message || j?.error || 'test_failed');
+        try { setTestReq(JSON.stringify(j.request_body || j.request || {}, null, 2)); } catch { setTestReq(''); }
+      }
+    } catch (e) { setTestOut(String(e?.message || e)); }
+    finally { setTestBusy(false); }
+  };
+
+  // Preview helpers
+  const previewObj = useMemo(() => {
+    const toolsMap = form.tools || {};
+    const messages = Array.isArray(form.messages) ? form.messages : [];
+    return {
+      instructions: form.dev_message || '',
+      seed_messages: messages,
+      tools: toolsMap,
+      input: '<user input>'
+    };
+  }, [form.dev_message, form.messages, form.tools]);
+  const approxTokens = useMemo(() => {
+    const messages = Array.isArray(form.messages) ? form.messages : [];
+    const chars = (form.dev_message || '').length + messages.reduce((n,m)=> n + (m?.content||'').length + (m?.role||'').length, 0);
+    return Math.max(1, Math.ceil(chars / 4)) + messages.length + 10;
+  }, [form.dev_message, form.messages]);
+  const copyPreview = async () => {
+    try { await navigator.clipboard.writeText(JSON.stringify(previewObj, null, 2)); alert('Preview copied'); } catch { alert('Copy failed'); }
+  };
+
+  // MCP status panel
+  const [mcp, setMcp] = useState(null);
+  const [mcpBusy, setMcpBusy] = useState(false);
+  const [mcpMain, setMcpMain] = useState(null);
+  const [mcpMainBusy, setMcpMainBusy] = useState(false);
+  const [mcpToken, setMcpToken] = useState('');
+  const [vecBusy, setVecBusy]

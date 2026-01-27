@@ -1,0 +1,10 @@
+{
+  "name": "conversation-hub",
+  "version": "1.0.0",
+  "enabled": true,
+  "hooks": {
+    "onModuleLoaded": "onModuleLoaded",
+    "onModuleDisabled": "onModuleDisabled"
+  }
+}
+

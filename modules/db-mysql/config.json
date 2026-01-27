@@ -1,0 +1,14 @@
+{
+  "id": "db-mysql",
+  "name": "DB MySQL",
+  "description": "MySQL/MariaDB connectivity, views, and schema summary",
+  "category": "database",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true,
+  "hasProfil": true,
+  "surfaces": {
+    "profiles": "Profiles"
+  },
+  "defaultSurface": "profiles"
+}

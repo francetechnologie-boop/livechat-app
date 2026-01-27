@@ -1,0 +1,10 @@
+{
+  "name": "category_data_update",
+  "version": "1.0.0",
+  "enabled": true,
+  "hooks": {
+    "onModuleLoaded": "onModuleLoaded",
+    "onModuleDisabled": "onModuleDisabled"
+  }
+}
+

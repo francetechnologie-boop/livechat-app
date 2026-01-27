@@ -1,0 +1,480 @@
+import React, { useEffect, useMemo, useState } from 'react';
+
+export default function Development() {
+  const [status, setStatus] = useState(null);
+  const [files, setFiles] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [token, setToken] = useState(() => localStorage.getItem('mcp_dev_token') || '');
+  const [serverBase, setServerBase] = useState(() => localStorage.getItem('mcp_dev_base') || window.location.origin);
+  const [uploading, setUploading] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState('');
+  const [adminBusy, setAdminBusy] = useState(false);
+  const [adminMsg, setAdminMsg] = useState('');
+  const [wsBusy, setWsBusy] = useState(false);
+  const [wsResult, setWsResult] = useState('');
+  const [selectedFileId, setSelectedFileId] = useState('');
+  const [vectorStoreId, setVectorStoreId] = useState('');
+  const [oaBusy, setOaBusy] = useState(false);
+  const [oaMsg, setOaMsg] = useState('');
+  const [openaiKey, setOpenaiKey] = useState('');
+  const [openaiMsg, setOpenaiMsg] = useState('');
+  const [note, setNote] = useState(() => {
+    try { return localStorage.getItem('dev_panel_note') || ''; } catch { return ''; }
+  });
+  const [inspectorUrl, setInspectorUrl] = useState('http://localhost:6274');
+
+  const statusUrl = useMemo(() => `${serverBase.replace(/\/$/, '')}/mcp-dev/status`, [serverBase]);
+  const filesUrl = useMemo(() => {
+    const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+    return `${serverBase.replace(/\/$/, '')}/mcp-dev/files${qs}`;
+  }, [serverBase, token]);
+
+  const loadStatus = async () => {
+    try {
+      setBusy(true);
+      let creds = 'include';
+      try { const u = new URL(statusUrl, window.location.href); if (u.origin !== window.location.origin) creds = 'omit'; } catch {}
+      const res = await fetch(statusUrl, { credentials: creds });
+      const j = await res.json();
+      setStatus(j);
+    } catch { setStatus(null); } finally { setBusy(false); }
+  };
+  const loadFiles = async () => {
+    try {
+      setBusy(true);
+      const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+      const url = `${serverBase.replace(/\/$/, '')}/mcp-dev/files${qs}`;
+      let creds = 'include';
+      try { const u = new URL(url, window.location.href); if (u.origin !== window.location.origin) creds = 'omit'; } catch {}
+      const res = await fetch(url, { credentials: creds });
+      let j; const ct = res.headers.get('content-type') || '';
+      if (/application\/json/i.test(ct)) j = await res.json(); else j = { ok: false, note: await res.text() };
+      setFiles(Array.isArray(j.files) ? j.files : []);
+    } catch { setFiles([]); } finally { setBusy(false); }
+  };
+
+  useEffect(() => { loadStatus(); }, [statusUrl]);
+  useEffect(() => { loadFiles(); }, [serverBase, token]);
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch('/api/admin/openai/key', { credentials: 'include' });
+        const j = await r.json();
+        if (r.ok && j?.ok) setOpenaiKey(j.value || '');
+      } catch {}
+    })();
+  }, []);
+
+  const onSavePrefs = () => {
+    localStorage.setItem('mcp_dev_token', token);
+    localStorage.setItem('mcp_dev_base', serverBase);
+  };
+
+  const copy = async (txt) => { try { await navigator.clipboard.writeText(txt); } catch {} };
+
+  const regenToken = async () => {
+    setAdminBusy(true); setAdminMsg('');
+    try {
+      const r = await fetch('/api/admin/mcp-dev/token/regenerate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include' });
+      const j = await r.json();
+      if (r.ok && j?.ok) {
+        setToken(j.token || '');
+        onSavePrefs();
+        setAdminMsg('New token generated.');
+      } else {
+        setAdminMsg(j?.error || 'Failed to regenerate token (are you admin?)');
+      }
+    } catch (e) { setAdminMsg(String(e?.message || e)); } finally { setAdminBusy(false); }
+  };
+
+  const disableToken = async () => {
+    setAdminBusy(true); setAdminMsg('');
+    try {
+      const r = await fetch('/api/admin/mcp-dev/token/disable', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include' });
+      const j = await r.json();
+      if (r.ok && j?.ok) {
+        setToken('');
+        onSavePrefs();
+        setAdminMsg('Token disabled. Dev server now open.');
+      } else {
+        setAdminMsg(j?.error || 'Failed to disable token (are you admin?)');
+      }
+    } catch (e) { setAdminMsg(String(e?.message || e)); } finally { setAdminBusy(false); }
+  };
+
+  const onUpload = async (file) => {
+    if (!file) return;
+    setUploading(true); setUploadMsg('');
+    try {
+      const base = serverBase.replace(/\/$/, '');
+      const arr = await file.arrayBuffer();
+      const b64 = btoa(String.fromCharCode(...new Uint8Array(arr)));
+      const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+      const url = `${base}/mcp-dev/files/base64${qs}`;
+      let creds = 'include';
+      try { const u = new URL(url, window.location.href); if (u.origin !== window.location.origin) creds = 'omit'; } catch {}
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: creds,
+        body: JSON.stringify({ filename: file.name, content_base64: b64, content_type: file.type || 'application/octet-stream' })
+      });
+      let j; const ct = r.headers.get('content-type') || '';
+      if (/application\/json/i.test(ct)) j = await r.json(); else j = { ok: false, error: (await r.text()).slice(0, 800) };
+      if (r.ok && j?.ok) {
+        setUploadMsg(`Uploaded ${file.name}`);
+        loadFiles();
+      } else {
+        setUploadMsg(`Upload failed: ${j?.error || r.status}`);
+      }
+    } catch (e) {
+      setUploadMsg(String(e?.message || e));
+    } finally { setUploading(false); }
+  };
+
+  const uploadToOpenAI = async () => {
+    try {
+      setOaBusy(true); setOaMsg('');
+      const fileId = String(selectedFileId || '').trim();
+      if (!fileId) { setOaMsg('Select a file first'); return; }
+      const base = serverBase.replace(/\/$/, '');
+      const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+      const url = `${base}/mcp-dev/actions/tools/call${qs}`;
+      const args = { file_id: fileId };
+      const vs = String(vectorStoreId || '').trim(); if (vs) args.vector_store_id = vs;
+      let creds = 'include';
+      try { const u = new URL(url, window.location.href); if (u.origin !== window.location.origin) creds = 'omit'; } catch {}
+      const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: creds, body: JSON.stringify({ name: 'openai_upload_file', arguments: args }) });
+      let j; const ct = r.headers.get('content-type') || '';
+      if (/application\/json/i.test(ct)) j = await r.json(); else j = { ok: false, error: (await r.text()).slice(0, 800) };
+      if (r.ok && j?.ok) {
+        const out = j.output || {};
+        if (out.target === 'vector_store') setOaMsg(`Uploaded to Vector Store ${out.vector_store_id || ''}`);
+        else setOaMsg(`Uploaded to Files: ${out.file_id || ''}`);
+      } else {
+        setOaMsg(`Upload failed: ${j?.error || r.status}`);
+      }
+    } catch (e) {
+      setOaMsg(String(e?.message || e));
+    } finally { setOaBusy(false); }
+  };
+
+  return (
+    <div className="p-4 space-y-4">
+      <h2 className="text-xl font-semibold">Développement (MCP‑DEV)</h2>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="p-3 border rounded bg-white">
+          <div className="font-medium mb-2">Serveur</div>
+          <div className="flex gap-2 items-end mb-2">
+            <div className="grow">
+              <label className="text-xs">Base URL</label>
+              <input className="border rounded px-2 py-1 w-full" value={serverBase} onChange={(e)=>setServerBase(e.target.value)} />
+            </div>
+            <div className="grow">
+              <label className="text-xs">Token (si requis)</label>
+              <input className="border rounded px-2 py-1 w-full" value={token} onChange={(e)=>setToken(e.target.value)} />
+            </div>
+            <button className="px-3 py-1 rounded bg-indigo-600 text-white" onClick={onSavePrefs}>Save</button>
+          </div>
+          <div className="text-sm mb-2">Status: {busy ? 'Loading…' : (status?.ok ? 'ONLINE' : 'UNKNOWN')}</div>
+          {status?.wsUrl && (
+            <div className="text-xs">WS: <code className="px-1">{status.wsUrl}</code></div>
+          )}
+          <div className="flex gap-2 mt-2 items-center flex-wrap">
+            <button className="px-2 py-1 border rounded" onClick={loadStatus}>Refresh</button>
+            <button className="px-2 py-1 border rounded" onClick={loadFiles}>Reload Files</button>
+            <button className="px-2 py-1 rounded bg-emerald-600 text-white disabled:opacity-60" disabled={adminBusy} onClick={regenToken}>Generate token</button>
+            <button className="px-2 py-1 rounded bg-gray-700 text-white disabled:opacity-60" disabled={adminBusy} onClick={disableToken}>Disable token</button>
+            {adminMsg && <span className="text-xs text-gray-600">{adminMsg}</span>}
+          </div>
+          <div className="mt-3">
+            <div className="text-xs mb-1">OPENAI_API_KEY (server)</div>
+            <div className="flex gap-2 items-center">
+              <input type="password" className="border rounded px-2 py-1 w-full" placeholder="sk-..." value={openaiKey} onChange={(e)=>setOpenaiKey(e.target.value)} />
+              <button className="px-2 py-1 rounded border" onClick={async ()=>{
+                try {
+                  setOpenaiMsg('');
+                  const r = await fetch('/api/admin/openai/key', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify({ value: openaiKey }) });
+                  const j = await r.json();
+                  if (r.ok && j?.ok) setOpenaiMsg('Saved.'); else setOpenaiMsg(j?.error || 'Save failed');
+                } catch (e) { setOpenaiMsg(String(e?.message||e)); }
+              }}>Save</button>
+              <button className="px-2 py-1 rounded border" onClick={async ()=>{
+                try {
+                  setOpenaiMsg('');
+                  const r = await fetch('/api/admin/openai/key/clear', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include' });
+                  const j = await r.json();
+                  if (r.ok && j?.ok) { setOpenaiKey(''); setOpenaiMsg('Cleared.'); } else setOpenaiMsg(j?.error || 'Clear failed');
+                } catch (e) { setOpenaiMsg(String(e?.message||e)); }
+              }}>Clear</button>
+            </div>
+            {openaiMsg && <div className="text-xs text-gray-600 mt-1">{openaiMsg}</div>}
+          </div>
+        </div>
+
+        <div className="p-3 border rounded bg-white">
+          <div className="font-medium mb-2">Upload</div>
+          <input type="file" onChange={(e)=>onUpload(e.target.files?.[0])} />
+          {uploading && <div className="text-xs mt-2">Uploading…</div>}
+          {uploadMsg && <div className="text-xs mt-2">{uploadMsg}</div>}
+          <div className="text-xs text-gray-600 mt-2">Tip: select your deploy.sh to store it for the assistant.</div>
+        </div>
+      </div>
+
+      <div className="p-3 border rounded bg-white">
+        <div className="font-medium mb-2">Fichiers (MCP-DEV)</div>
+        <div className="overflow-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left border-b">
+                <th className="py-1">Nom</th>
+                <th className="py-1">Type</th>
+                <th className="py-1">Taille</th>
+                <th className="py-1">Créé</th>
+              </tr>
+            </thead>
+            <tbody>
+              {files.map(f => (
+                <tr key={f.id} className="border-b last:border-b-0">
+                  <td className="py-1">{f.file_name}</td>
+                  <td className="py-1">{f.content_type}</td>
+                  <td className="py-1">{f.size_bytes}</td>
+                  <td className="py-1">{new Date(f.created_at).toLocaleString()}</td>
+                </tr>
+              ))}
+              {!files.length && (
+                <tr><td className="py-2 text-gray-500" colSpan={4}>No files</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* MCP Inspector helper */}
+      <div className="p-3 border rounded bg-white">
+        <div className="font-medium mb-2">MCP Inspector</div>
+        <div className="text-sm text-gray-700 mb-2">
+          The MCP Inspector is a dev tool to test MCP servers. Your livechat backend now exposes an SSE transport compatible with the Inspector.
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-end">
+          <div>
+            <div className="text-xs mb-1">Inspector UI URL</div>
+            <div className="flex gap-2 items-center">
+              <input className="border rounded px-2 py-1 w-full" value={inspectorUrl} onChange={(e)=>setInspectorUrl(e.target.value)} />
+              <button className="px-2 py-1 rounded border" onClick={()=>{ try { window.open(inspectorUrl, '_blank'); } catch {} }}>Open</button>
+            </div>
+          </div>
+          <div>
+            <div className="text-xs mb-1">SSE URL (connect this in Inspector)</div>
+            <div className="flex gap-2 items-center flex-wrap">
+              <div className="flex items-center gap-2">
+                <code className="px-1">{`${serverBase.replace(/\/$/, '')}/mcp-dev/events`}</code>
+                <button className="text-xs px-2 py-0.5 border rounded" onClick={()=>copy(`${serverBase.replace(/\/$/, '')}/mcp-dev/events`)}>Copy</button>
+              </div>
+              <div className="flex items-center gap-2">
+                <code className="px-1">{`${serverBase.replace(/\/$/, '')}/mcp/events`}</code>
+                <button className="text-xs px-2 py-0.5 border rounded" onClick={()=>copy(`${serverBase.replace(/\/$/, '')}/mcp/events`)}>Copy</button>
+              </div>
+            </div>
+          </div>
+          <div>
+            <div className="text-xs mb-1">Streamable HTTP URL (Inspector alternative)</div>
+            <div className="flex gap-2 items-center flex-wrap">
+              <div className="flex items-center gap-2">
+                <code className="px-1">{`${serverBase.replace(/\/$/, '')}/mcp-dev/stream`}</code>
+                <button className="text-xs px-2 py-0.5 border rounded" onClick={()=>copy(`${serverBase.replace(/\/$/, '')}/mcp-dev/stream`)}>Copy</button>
+              </div>
+              <div className="flex items-center gap-2">
+                <code className="px-1">{`${serverBase.replace(/\/$/, '')}/mcp/stream`}</code>
+                <button className="text-xs px-2 py-0.5 border rounded" onClick={()=>copy(`${serverBase.replace(/\/$/, '')}/mcp/stream`)}>Copy</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="text-xs text-gray-600 mt-2">
+          Run: <code className="px-1">npx @modelcontextprotocol/inspector</code>. In the UI, choose transport "SSE" and paste one of the SSE URLs above.
+        </div>
+      </div>
+
+      {/* OpenAI Storage bridge */}
+      <div className="p-3 border rounded bg-white">
+        <div className="font-medium mb-2">OpenAI Storage</div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+          <div>
+            <div className="text-xs mb-1">Select file</div>
+            <select className="border rounded px-2 py-1 w-full" value={selectedFileId} onChange={(e)=>setSelectedFileId(e.target.value)}>
+              <option value="">(choose)</option>
+              {files.map(f => (
+                <option key={f.id} value={f.id}>{f.file_name} ({Math.round((f.size_bytes||0)/1024)} KB)</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <div className="text-xs mb-1">Vector Store ID (optional)</div>
+            <input className="border rounded px-2 py-1 w-full" placeholder="vs_..." value={vectorStoreId} onChange={(e)=>setVectorStoreId(e.target.value)} />
+          </div>
+          <div className="flex gap-2">
+            <button className="px-3 py-1 rounded bg-emerald-600 text-white disabled:opacity-60" onClick={uploadToOpenAI} disabled={oaBusy || !selectedFileId}>{oaBusy ? 'Uploading.' : 'Upload to OpenAI'}</button>
+          </div>
+        </div>
+        {oaMsg && <div className="text-xs mt-2">{oaMsg}</div>}
+      </div>
+
+      {/* WS Tools Health (initialize + tools/list) */}
+      <div className="p-3 border rounded bg-white">
+        <div className="font-medium mb-2">Test outils (WebSocket)</div>
+        <div className="text-sm text-gray-700 mb-2">Ouvre un WS sur /mcp-dev/ws, envoie initialize puis tools/list et affiche le résultat.</div>
+        <div className="flex items-center gap-2 mb-2">
+          <button
+            className="px-3 py-1 rounded bg-indigo-600 text-white disabled:opacity-60"
+            disabled={wsBusy}
+            onClick={async () => {
+              setWsBusy(true); setWsResult('');
+              try {
+                // Compute ws URL
+                let wsUrl = status?.wsUrl || '';
+                if (!wsUrl) {
+                  try {
+                    const u = new URL(serverBase.replace(/\/$/, ''));
+                    const scheme = u.protocol === 'https:' ? 'wss:' : 'ws:';
+                    wsUrl = `${scheme}//${u.host}/mcp-dev/ws`;
+                  } catch {
+                    const here = new URL(window.location.href);
+                    const scheme = here.protocol === 'https:' ? 'wss:' : 'ws:';
+                    wsUrl = `${scheme}//${here.host}/mcp-dev/ws`;
+                  }
+                }
+                const qs = token ? (wsUrl.includes('?') ? `&token=${encodeURIComponent(token)}` : `?token=${encodeURIComponent(token)}`) : '';
+                const url = `${wsUrl}${qs}`;
+
+                // Browser WebSocket subprotocols must be valid tokens (no semicolons/spaces).
+                // Use safe variants; server accepts any and negotiates.
+                const protocols = [
+                  'mcp.version.2024-11-05',
+                  'vnd.mcp+json',
+                  'mcp',
+                  'jsonrpc'
+                ];
+
+                const logLines = [];
+                const ws = new WebSocket(url, protocols);
+                let step = 0;
+                const send = (obj) => ws.send(JSON.stringify(obj));
+                ws.onopen = () => {
+                  logLines.push('WS open');
+                  // initialize
+                  send({ jsonrpc: '2.0', id: 'init-1', method: 'initialize', params: {} });
+                };
+                ws.onmessage = (ev) => {
+                  try {
+                    const msg = JSON.parse(ev.data);
+                    logLines.push(`<= ${ev.data.slice(0, 400)}`);
+                    if (msg.result && msg.result.protocolVersion && step === 0) {
+                      step = 1;
+                      // Now list tools
+                      send({ jsonrpc: '2.0', id: 'tools-1', method: 'tools/list', params: {} });
+                    } else if (msg.result && msg.result.tools && step <= 1) {
+                      step = 2;
+                      const names = (msg.result.tools || []).map(t => t.name).join(', ');
+                      logLines.push(`Tools: ${names || '(none)'}`);
+                      try { ws.close(); } catch {}
+                    }
+                  } catch { /* ignore parse errors */ }
+                };
+                ws.onerror = () => {
+                  logLines.push('WS error');
+                };
+                ws.onclose = () => {
+                  if (logLines.length === 0) logLines.push('WS closed');
+                  setWsResult(logLines.join('\n'));
+                  setWsBusy(false);
+                };
+              } catch (e) {
+                setWsResult(String(e?.message || e));
+                setWsBusy(false);
+              }
+            }}
+          >{wsBusy ? 'Testing…' : 'Test tools (WS)'}</button>
+        </div>
+        {wsResult && (
+          <pre className="text-xs bg-gray-50 border rounded p-2 whitespace-pre-wrap max-h-64 overflow-auto">{wsResult}</pre>
+        )}
+      </div>
+
+      {/* Notes area (local only) */}
+      <div className="p-3 border rounded bg-white">
+        <div className="font-medium mb-2">Notes</div>
+        <textarea
+          className="border rounded px-2 py-1 w-full h-32"
+          placeholder="Write comments or todos here..."
+          value={note}
+          onChange={(e)=>{
+            const v = e.target.value;
+            setNote(v);
+            try { localStorage.setItem('dev_panel_note', v); } catch {}
+          }}
+        />
+        <div className="flex items-center gap-2 mt-2">
+          <button
+            className="px-3 py-1 rounded border"
+            onClick={()=>{ try { localStorage.setItem('dev_panel_note', note || ''); } catch {} }}
+          >Save</button>
+          <button
+            className="px-3 py-1 rounded border"
+            onClick={()=>{ setNote(''); try { localStorage.removeItem('dev_panel_note'); } catch {} }}
+          >Clear</button>
+          <span className="text-xs text-gray-600">Autosaves locally in this browser.</span>
+        </div>
+      </div>
+
+      {/* OpenAI UI helper section */}
+      <div className="p-3 border rounded bg-white">
+        <div className="font-medium mb-2">OpenAI UI — Connection Settings</div>
+        <div className="text-sm grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <div className="text-xs mb-1">URL</div>
+            <div className="flex gap-2 items-center">
+              <code className="px-1 break-all">{status?.wsUrl ? status.wsUrl : `${serverBase.replace(/\/$/, '')}/mcp-dev/ws`}</code>
+              <button className="text-xs px-2 py-0.5 border rounded" onClick={() => copy(status?.wsUrl ? status.wsUrl : `${serverBase.replace(/\/$/, '')}/mcp-dev/ws`)}>Copy</button>
+            </div>
+          </div>
+          <div>
+            <div className="text-xs mb-1">Label</div>
+            <div className="flex gap-2 items-center">
+              <code className="px-1">mcp_dev</code>
+              <button className="text-xs px-2 py-0.5 border rounded" onClick={() => copy('mcp_dev')}>Copy</button>
+            </div>
+          </div>
+          <div>
+            <div className="text-xs mb-1">Authentication → Access token / API key</div>
+            <div className="flex gap-2 items-center">
+              <code className="px-1 break-all">{token || '(none)'}</code>
+              <button className="text-xs px-2 py-0.5 border rounded" onClick={() => token && copy(token)} disabled={!token}>Copy</button>
+            </div>
+          </div>
+        </div>
+        <div className="text-xs text-gray-600 mt-2">In the OpenAI Chat UI, click Tools → Connect MCP Server, then paste the URL and token above. Use any description you like.</div>
+
+        <div className="font-medium mt-4 mb-1">OpenAI Actions (HTTP) — Optional</div>
+        <div className="text-sm grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <div className="text-xs mb-1">OpenAPI schema URL</div>
+            <div className="flex gap-2 items-center">
+              <code className="px-1 break-all">{`${serverBase.replace(/\/$/, '')}/mcp-dev/actions/openapi.json`}</code>
+              <button className="text-xs px-2 py-0.5 border rounded" onClick={() => copy(`${serverBase.replace(/\/$/, '')}/mcp-dev/actions/openapi.json`)}>Copy</button>
+            </div>
+          </div>
+          <div>
+            <div className="text-xs mb-1">Bearer/Query Token</div>
+            <div className="flex gap-2 items-center">
+              <code className="px-1 break-all">{token || '(none)'}</code>
+              <button className="text-xs px-2 py-0.5 border rounded" onClick={() => token && copy(token)} disabled={!token}>Copy</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+

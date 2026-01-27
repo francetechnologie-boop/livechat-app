@@ -1,0 +1,400 @@
+  }
+
+  async function upsertSidebarTree({ entry_id, label, hash, icon, logo, org_id, level = 0, parent_entry_id = null, type = "module" }) {
+    if (!modulePool) throw new Error('db_disabled');
+    await ensureSidebarTable();
+    if (!entry_id || String(entry_id).trim() === '') {
+      const s = String(hash || '');
+      const prefix = (/^#?\/(?:modules\/)?[^/]+/.test(s)) ? 'mod' : 'entry';
+      entry_id = await genEntryId(prefix);
+    }
+    // UPDATE-first (null-safe) to avoid relying solely on ON CONFLICT with nullable columns
+    const upd = await modulePool.query(
+      `UPDATE mod_module_manager_sidebar_entries
+          SET label=$2, hash=$3, icon=$4, logo=$5, type=COALESCE($9,'module'), attached=TRUE, updated_at=NOW()
+        WHERE entry_id=$1
+          AND level=$6
+          AND org_id IS NOT DISTINCT FROM $7
+          AND parent_entry_id IS NOT DISTINCT FROM $8
+        RETURNING *`,
+      [entry_id, label, hash, icon || null, logo || null, Number(level)||0, org_id || null, parent_entry_id || null, type || 'module']
+    );
+    if (upd && upd.rows && upd.rows[0]) return upd.rows[0];
+    const posRes = await modulePool.query(
+      `SELECT COALESCE(MAX(position), -1) AS maxp FROM mod_module_manager_sidebar_entries
+       WHERE (($1::text IS NULL AND org_id IS NULL) OR ($1::text IS NOT NULL AND org_id = $1::text))
+         AND level = $2::smallint
+         AND ( ($3::text IS NULL AND parent_entry_id IS NULL) OR parent_entry_id = $3::text )`,
+      [org_id || null, Number(level)||0, parent_entry_id || null]
+    );
+    const pos = Number(posRes.rows?.[0]?.maxp ?? -1) + 1;
+    // Fallback: update by entry_id within org regardless of previous level/parent
+    const upd2 = await modulePool.query(
+      `UPDATE mod_module_manager_sidebar_entries
+          SET label=$2, hash=$3, icon=$4, logo=$5, level=$6, parent_entry_id=$8, position=$9, type=COALESCE($10,'module'), attached=TRUE, updated_at=NOW()
+        WHERE entry_id=$1 AND org_id IS NOT DISTINCT FROM $7
+        RETURNING *`,
+      [entry_id, label, hash, icon || null, logo || null, Number(level)||0, org_id || null, parent_entry_id || null, pos, type || 'module']
+    );
+    if (upd2 && upd2.rows && upd2.rows[0]) return upd2.rows[0];
+    const saved = await modulePool.query(
+      `INSERT INTO mod_module_manager_sidebar_entries(entry_id, label, hash, icon, logo, position, org_id, level, parent_entry_id, type)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, COALESCE($10,'module'))
+       ON CONFLICT ON CONSTRAINT uq_mod_mm_sidebar_hier_cols
+       DO UPDATE SET label=EXCLUDED.label, hash=EXCLUDED.hash, icon=EXCLUDED.icon, logo=EXCLUDED.logo, attached=TRUE, updated_at=NOW()
+       RETURNING *`,
+      [entry_id, label, hash, icon || null, logo || null, pos, org_id || null, Number(level)||0, parent_entry_id || null, type || 'module']
+    );
+    return saved && saved.rows && saved.rows[0] ? saved.rows[0] : null;
+  }
+
+  async function reorderSidebarTree(order = [], org_id = null, level = 0, parent_entry_id = null) {
+    if (!modulePool) return;
+    await ensureSidebarTable();
+    const ids = Array.isArray(order) ? order.map(String) : [];
+    for (let i = 0; i < ids.length; i++) {
+      await modulePool.query(
+        `UPDATE mod_module_manager_sidebar_entries seT position=$2, updated_at=NOW()
+         WHERE entry_id=$1 AND (($3::text IS NULL AND org_id IS NULL) OR ($3::text IS NOT NULL AND org_id = $3::text))
+           AND level=$4::smallint
+           AND (($5::text IS NULL AND parent_entry_id IS NULL) OR parent_entry_id = $5::text)`,
+        [ids[i], i, org_id || null, Number(level)||0, parent_entry_id || null]
+      );
+    }
+  }
+
+  async function deleteSidebarTree(entry_id, org_id = null, level = 0, parent_entry_id = null) {
+    if (!modulePool) return;
+    await ensureSidebarTable();
+    await modulePool.query(
+      `DELETE FROM mod_module_manager_sidebar_entries
+       WHERE entry_id=$1 AND (($2::text IS NULL AND org_id IS NULL) OR ($2::text IS NOT NULL AND org_id = $2::text))
+         AND level=$3::smallint
+         AND (($4::text IS NULL AND parent_entry_id IS NULL) OR parent_entry_id = $4::text)`,
+      [entry_id, org_id || null, Number(level)||0, parent_entry_id || null]
+    );
+  }
+
+  async function upsertSidebarEntry({ entry_id, label, hash, icon, logo, org_id, attached }) {
+    if (!modulePool) throw new Error('db_disabled');
+    await ensureSidebarTable();
+    if (!entry_id || String(entry_id).trim() === '') {
+      const s2 = String(hash || '');
+      const prefix = (/^#?\/(?:modules\/)?[^/]+/.test(s2)) ? 'mod' : 'entry';
+      entry_id = await genEntryId(prefix);
+    }
+    const desiredAttached = (typeof attached === 'boolean') ? attached : true;
+    // UPDATE-first (root level), null-safe on org
+    const upd = await modulePool.query(
+      `UPDATE mod_module_manager_sidebar_entries
+         SET label=$2, hash=$3, icon=$4, logo=$5, attached=$6, updated_at=NOW()
+       WHERE entry_id=$1 AND level=0 AND parent_entry_id IS NULL
+         AND org_id IS NOT DISTINCT FROM $7
+       RETURNING *`,
+      [entry_id, label, hash, icon || null, logo || null, desiredAttached, org_id || null]
+    );
+    if (upd && upd.rows && upd.rows[0]) return upd.rows[0];
+    const posRes = await modulePool.query(`
+      SELECT COALESCE(MAX(position), -1) AS maxp
+      FROM mod_module_manager_sidebar_entries
+      WHERE (($1::text IS NULL AND org_id IS NULL) OR ($1::text IS NOT NULL AND org_id = $1::text))
+        AND level = 0 AND parent_entry_id IS NULL`, [org_id || null]);
+    const pos = Number(posRes.rows?.[0]?.maxp ?? -1) + 1;
+    const saved = await modulePool.query(
+      `INSERT INTO mod_module_manager_sidebar_entries(entry_id, label, hash, icon, logo, position, org_id, level, parent_entry_id, attached)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,0,NULL,$8)
+       ON CONFLICT ON CONSTRAINT uq_mod_mm_sidebar_hier_cols
+       DO UPDATE SET label=EXCLUDED.label, hash=EXCLUDED.hash, icon=EXCLUDED.icon, logo=EXCLUDED.logo, attached=EXCLUDED.attached, updated_at=NOW()
+       RETURNING *`,
+      [entry_id, label, hash, icon || null, logo || null, pos, org_id || null, desiredAttached]
+    );
+    return saved && saved.rows && saved.rows[0] ? saved.rows[0] : null;
+  }
+
+  async function reorderSidebarEntries(order = [], org_id = null) {
+    if (!modulePool) return;
+    await ensureSidebarTable();
+    const ids = Array.isArray(order) ? order.map(String) : [];
+    for (let i = 0; i < ids.length; i++) {
+      await modulePool.query(`
+        UPDATE mod_module_manager_sidebar_entries
+        SET position=$2, updated_at=NOW()
+        WHERE entry_id=$1 AND (
+          ($3::text IS NULL AND org_id IS NULL)
+          OR ($3::text IS NOT NULL AND org_id = $3::text)
+        )`, [ids[i], i, org_id || null]);
+    }
+  }
+
+  async function deleteSidebarEntry(entry_id, org_id = null) {
+    if (!modulePool) return;
+    await ensureSidebarTable();
+    await modulePool.query(`
+      DELETE FROM mod_module_manager_sidebar_entries
+      WHERE entry_id=$1 AND (
+        ($2::text IS NULL AND org_id IS NULL)
+        OR ($2::text IS NOT NULL AND org_id = $2::text)
+      )`, [entry_id, org_id || null]);
+  }
+
+  app.get('/api/sidebar', async (req, res) => {
+    try {
+      const items = await getSidebarEntries(req);
+      res.json({ ok: true, items });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: 'server_error' });
+    }
+  });
+
+  app.post('/api/sidebar/add', async (req, res) => {
+    if (!ensureAdmin(req, res)) return;
+    try {
+      const { entry_id, label, hash, icon, logo, org_id, level, parent_entry_id, attached } = req.body || {};
+      if (!label) return res.status(400).json({ ok: false, error: 'invalid_payload' });
+      const safeHash = (typeof hash === 'string') ? hash : '';
+      const org = (typeof org_id === 'string' && org_id) ? org_id : pickOrgId(req);
+      const saved = await upsertSidebarEntry({ entry_id: entry_id ? String(entry_id) : '', label: String(label), hash: String(safeHash), icon: icon ? String(icon) : null, logo: logo ? String(logo) : null, org_id: org || null, level: Number(level)||0, parent_entry_id: parent_entry_id ? String(parent_entry_id) : null, attached: (typeof attached === 'boolean') ? attached : false });
+      const items = await getSidebarEntries(req);
+      res.json({ ok: true, items, saved });
+    } catch (e) {
+      console.error('sidebar:add failed', e);
+      res.status(500).json({ ok: false, error: 'server_error', message: e?.message || String(e) });
+    }
+  });
+
+  app.post('/api/sidebar/reorder', async (req, res) => {
+    if (!ensureAdmin(req, res)) return;
+    try {
+      const { order, org_id, level, parent_entry_id } = req.body || {};
+      if (!Array.isArray(order)) return res.status(400).json({ ok: false, error: 'invalid_payload' });
+      const org = (typeof org_id === 'string' && org_id) ? org_id : pickOrgId(req);
+      await reorderSidebarEntries(order.map(String), org || null, Number(level)||0, parent_entry_id ? String(parent_entry_id) : null);
+      const items = await getSidebarEntries(req);
+      res.json({ ok: true, items });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: 'server_error' });
+    }
+  });
+
+  app.post('/api/sidebar/delete', async (req, res) => {
+    if (!ensureAdmin(req, res)) return;
+    try {
+      const { entry_id, org_id, level, parent_entry_id } = req.body || {};
+      if (!entry_id) return res.status(400).json({ ok: false, error: 'invalid_payload' });
+      const org = (typeof org_id === 'string' && org_id) ? org_id : pickOrgId(req);
+      await deleteSidebarEntry(String(entry_id), org || null, Number(level)||0, parent_entry_id ? String(parent_entry_id) : null);
+      const items = await getSidebarEntries(req);
+      res.json({ ok: true, items });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: 'server_error' });
+    }
+  });
+
+  // Hierarchical endpoints (explicit)
+  app.get('/api/sidebar/tree', async (req, res) => {
+    try {
+      // Strict: only read from DB-backed table
+      const items = await getSidebarTree(req);
+      res.json({ ok: true, items });
+    } catch (e) { res.status(500).json({ ok:false, error:'server_error' }); }
+  });
+  app.post('/api/sidebar/tree/add', async (req, res) => {
+    if (!ensureAdmin(req, res)) return;
+    try {
+      const b = req.body || {};
+      const org = (typeof b.org_id === 'string' && b.org_id) ? b.org_id : pickOrgId(req);
+      if (!b.label) return res.status(400).json({ ok:false, error:'invalid_payload' });
+      const saved = await upsertSidebarTree({ entry_id: b.entry_id ? String(b.entry_id) : '', label:String(b.label), hash:b.hash?String(b.hash):'', icon:b.icon?String(b.icon):null, logo:b.logo?String(b.logo):null, org_id: org || null, level:Number(b.level)||0, parent_entry_id: b.parent_entry_id?String(b.parent_entry_id):null });
+      const items = await getSidebarTree({ query: { level: b.level, parent_entry_id: b.parent_entry_id }, body: {}, headers: req.headers });
+      res.json({ ok: true, items, saved });
+    } catch (e) { res.status(500).json({ ok:false, error:'server_error', message: e?.message||String(e) }); }
+  });
+  app.post('/api/sidebar/tree/reorder', async (req, res) => {
+    if (!ensureAdmin(req, res)) return;
+    try {
+      const b = req.body || {};
+      const org = (typeof b.org_id === 'string' && b.org_id) ? b.org_id : pickOrgId(req);
+      await reorderSidebarTree((Array.isArray(b.order)?b.order:[]).map(String), org||null, Number(b.level)||0, b.parent_entry_id?String(b.parent_entry_id):null);
+      const items = await getSidebarTree({ query: { level: b.level, parent_entry_id: b.parent_entry_id }, body: {}, headers: req.headers });
+      res.json({ ok: true, items });
+    } catch (e) { res.status(500).json({ ok:false, error:'server_error' }); }
+  });
+  app.post('/api/sidebar/tree/delete', async (req, res) => {
+    if (!ensureAdmin(req, res)) return;
+    try {
+      const b = req.body || {};
+      const org = (typeof b.org_id === 'string' && b.org_id) ? b.org_id : pickOrgId(req);
+      if (!b.entry_id) return res.status(400).json({ ok:false, error:'invalid_payload' });
+      await deleteSidebarTree(String(b.entry_id), org||null, Number(b.level)||0, b.parent_entry_id?String(b.parent_entry_id):null);
+      const items = await getSidebarTree({ query: { level: b.level, parent_entry_id: b.parent_entry_id }, body: {}, headers: req.headers });
+      res.json({ ok: true, items });
+    } catch (e) { res.status(500).json({ ok:false, error:'server_error' }); }
+  });
+
+  // Detach: mark entry as not attached (stays in library lists, hidden from tree)
+  app.post('/api/sidebar/tree/detach', async (req, res) => {
+    if (!ensureAdmin(req, res)) return;
+    try {
+      await ensureSidebarTable();
+      const b = req.body || {};
+      const org = (typeof b.org_id === 'string' && b.org_id) ? b.org_id : pickOrgId(req);
+      if (!b.entry_id) return res.status(400).json({ ok:false, error:'invalid_payload' });
+
+      // First try: detach within the same org (null-safe)
+      let upd = await modulePool.query(
+        `UPDATE mod_module_manager_sidebar_entries
+            SET attached=FALSE, updated_at=NOW()
+          WHERE entry_id=$1 AND org_id IS NOT DISTINCT FROM $2
+          RETURNING *`,
+        [ String(b.entry_id), org || null ]
+      );
+      // Fallback: detach by entry_id regardless of org (in case entry_id is unique in your data)
+      if (!upd || !upd.rows || upd.rows.length === 0) {
+        upd = await modulePool.query(
+          `UPDATE mod_module_manager_sidebar_entries
+              SET attached=FALSE, updated_at=NOW()
+            WHERE entry_id=$1
+            RETURNING *`,
+          [ String(b.entry_id) ]
+        );
+      }
+      const saved = upd && upd.rows && upd.rows[0] ? upd.rows[0] : null;
+      const items = await getSidebarTree({ query: { level: b.level, parent_entry_id: b.parent_entry_id }, body: {}, headers: req.headers });
+      res.json({ ok:true, saved, items });
+    } catch (e) {
+      console.error('detach failed', e);
+      res.status(500).json({ ok:false, error:'server_error', message: e?.message||String(e) });
+    }
+  });
+
+  // Generate a templated ZIP for local download (no server-side writes)
+  app.post("/api/modules/generate-zip", async (req, res) => {
+    if (!ensureAdmin(req, res)) return;
+    const body = req.body || {};
+    const toSlug = (s = "") => String(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'custom-module';
+    try {
+      // Lazy import so the server still boots when jszip isn't installed
+      let JSZip;
+      try {
+        ({ default: JSZip } = await import('jszip'));
+      } catch (e) {
+        // Fallback: try to import from backend/node_modules to support monorepo layout
+        try {
+          const backendDir = path.resolve(__dirname, '../../../backend');
+          const { pathToFileURL } = await import('url');
+          const candidates = [
+            path.join(backendDir, 'node_modules', 'jszip', 'lib', 'index.js'),
+            path.join(backendDir, 'node_modules', 'jszip', 'dist', 'jszip.min.js'),
+            path.join(process.cwd(), 'node_modules', 'jszip', 'lib', 'index.js'),
+          ];
+          let mod = null;
+          for (const p of candidates) {
+            try {
+              if (fs.existsSync(p)) { mod = await import(pathToFileURL(p).href); break; }
+            } catch {}
+          }
+          if (!mod) return res.status(501).json({ ok: false, error: 'jszip_not_installed' });
+          JSZip = mod.default || mod.JSZip || mod;
+        } catch {
+          return res.status(501).json({ ok: false, error: 'jszip_not_installed' });
+        }
+      }
+      const name = String(body.name || '').trim();
+      const id = toSlug(String(body.id || name || ''));
+      if (!name || !id) return res.status(400).json({ ok: false, error: 'invalid_name' });
+
+      const modulesRoot = path.resolve(__dirname, '../../../modules');
+      const templateDir = path.join(modulesRoot, 'module-template');
+      if (!fs.existsSync(templateDir)) return res.status(500).json({ ok: false, error: 'template_missing' });
+
+      const zip = new JSZip();
+      const root = zip.folder(id);
+      const addRecursive = (src, rel = '') => {
+        const stat = fs.statSync(src);
+        if (stat.isDirectory()) {
+          for (const entry of fs.readdirSync(src)) {
+            addRecursive(path.join(src, entry), path.join(rel, entry));
+          }
+        } else if (stat.isFile()) {
+          const base = path.basename(src);
+          let content = fs.readFileSync(src);
+          // Patch some files
+          if (base === 'config.json') {
+            try {
+              const cfg = JSON.parse(String(content));
+              cfg.id = id;
+              cfg.name = name;
+              cfg.category = cfg.category || String(body.category || 'custom');
+            cfg.database = cfg.database || { table: MODULES_TABLE, record: {} };
+              cfg.database.record = cfg.database.record || {};
+              cfg.database.record.name = id;
+              content = Buffer.from(JSON.stringify(cfg, null, 2));
+            } catch {}
+          } else if (base === 'module.config.json') {
+            try {
+              const mcfg = JSON.parse(String(content));
+              mcfg.name = id;
+              content = Buffer.from(JSON.stringify(mcfg, null, 2));
+            } catch {}
+          }
+          root.file(rel, content);
+        }
+      };
+      addRecursive(templateDir);
+
+      const buffer = await zip.generateAsync({ type: 'nodebuffer' });
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename="${id}.zip"`);
+      res.end(buffer);
+    } catch (e) {
+      logToFile?.(`❌ modules:generate-zip failed: ${e.message}`);
+      res.status(500).json({ ok: false, error: 'server_error' });
+    }
+  });
+
+  logToFile?.("✅ Module manager routes ready");
+}
+
+// Loader-compatible entry for the module system.
+// The dynamic module loader will call register(app, ctx).
+export function register(app, ctx = {}) {
+  const { requireAdmin, getSetting, setSetting, logToFile, pool, getLoadedModules } = ctx;
+  // Mount the existing module-manager endpoints using the provided ctx
+  try {
+    createModuleManager({ app, requireAdmin, getSetting, setSetting, logToFile, pool });
+  } catch (e) {
+    logToFile?.(`[module-manager] register failed: ${e?.message || e}`);
+  }
+  // Best-effort sync: ensure all runtime-mounted modules exist in DB table
+  (async () => {
+    try {
+      if (typeof getLoadedModules === 'function') {
+        const items = getLoadedModules() || [];
+        const ids = Array.from(new Set(items.map(x => x && x.id).filter(Boolean)));
+        if (ids.length) {
+          await ensureModulesTable();
+          for (const id of ids) {
+            try { await setDbModuleState(id, { install: true, active: true, defaultVersion: '1.0.0' }); } catch {}
+          }
+        }
+      }
+    } catch (e) { logToFile?.(`[module-manager] sync mounted modules failed: ${e?.message || e}`); }
+  })();
+  // Expose runtime-mounted modules for diagnostics/UI
+  app.get('/api/module-manager/mounted', (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const items = typeof getLoadedModules === 'function' ? getLoadedModules() : [];
+      res.json({ ok: true, items });
+    } catch (e) {
+      logToFile?.(`[module-manager] mounted list error: ${e?.message || e}`);
+      res.status(500).json({ ok:false, error:'server_error' });
+    }
+  });
+}
+
+export default createModuleManager;
+
+
+
+

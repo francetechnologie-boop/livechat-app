@@ -1,0 +1,118 @@
+{
+  "images": {
+    "download": true,
+    "limit": 3,
+    "sources": [
+      "variants[].image"
+    ],
+    "include_regex": [
+      "\\.(?:jpe?g|png|webp|avif)(?:\\?|$)",
+      "cdn/shop/products/",
+      "cdn\\.shopify\\.com/"
+    ],
+    "exclude_regex": [
+      "^data:image/svg",
+      "%3Csvg",
+      "\\.svg(?:\\?|$)",
+      "(?:^|/)logo(?:$|\\.)",
+      "favicon",
+      "sprite",
+      "icon",
+      "placeholder",
+      "badge",
+      "loading",
+      "_(?:[0-1]?\\d?\\d)x(?:[0-1]?\\d?\\d)(?:_crop_center)?\\.",
+      "social|facebook|instagram|whatsapp",
+      "payment|visa|mastercard|maestro|american[-_ ]?express|paypal|apple[-_ ]?pay|google[-_ ]?pay|shop[-_ ]?pay|union[-_ ]?pay"
+    ],
+    "meta": [
+      "meta[property='og:image']",
+      "meta[name='twitter:image']",
+      "link[rel='image_src']"
+    ]
+  },
+  "content": {
+    "roots": [
+      "section.product--container",
+      "article.product--outer",
+      ".product-main",
+      ".product-details",
+      ".product-description",
+      ".product-description.rte",
+      ".collapsible-tab__text"
+    ],
+    "fields": {
+      "title": [
+        "h1.product-title",
+        ".product-block--title h1"
+      ],
+      "sku": [
+        "[data-product-sku]",
+        ".product-sku span",
+        ".product-sku"
+      ],
+      "brand": [
+        ".product-vendor a",
+        ".product-vendor"
+      ],
+      "price": [
+        ".product-pricing .price__current [data-price]",
+        ".product-pricing [data-price-min]",
+        ".product-pricing .money[data-price]"
+      ],
+      "description": [
+        ".product-description.rte",
+        ".product-description",
+        ".collapsible-tab__text"
+      ],
+      "documents": [
+        "a[href$='.pdf']",
+        "a[href$='.doc']",
+        "a[href$='.docx']",
+        "a[href$='.xls']",
+        "a[href$='.xlsx']",
+        "a[href$='.zip']"
+      ]
+    },
+    "exclude": [
+      "form[action*='/cart/add']",
+      "shopify-payment-button",
+      "shopify-cleanslate",
+      "data-shopify",
+      "aria-live",
+      "product-gallery",
+      "product-media-modal",
+      "product__media-modal",
+      "gallery-navigation",
+      "delivery-widget__auto"
+    ]
+  },
+  "classify": {
+    "force": "product",
+    "path_rules": [
+      { "type": "product", "pattern": "^/products/" },
+      { "type": "product", "pattern": "^/collections/[^/]+/products/" },
+      { "type": "category", "pattern": "^/collections(?:$|\\?)" },
+      { "type": "article", "pattern": "^/blogs/" }
+    ]
+  },
+  "variants": {
+    "container": ".variant-radios, .variant-selects, .variant-selection, form[action*='/cart/add']",
+    "ids": "select[name='id'] option[value]:not([value='not-selected']), input[name='id'][value]",
+    "option_groups": [
+      {
+        "group_label": ".options-selection label[data-variant-option-name], fieldset[data-option-index] legend",
+        "options": ".options-selection [data-variant-option] option, fieldset[data-option-index] input[type='radio'], select[data-option-index] option"
+      }
+    ],
+    "selected_option_selector": ".options-selection [data-variant-option] option:checked, fieldset[data-option-index] input[type='radio']:checked, select[name='id'] option:checked, input[name='id'][value]",
+    "price_selector": ".product-pricing .price__current [data-price], .product-pricing [data-price-min], [data-product-price]",
+    "image_selector": ".product-gallery--viewer img, .product-gallery--image img, [data-media-id] img, [id*='Thumbnail'] img"
+  },
+  "documents": {
+    "download": true,
+    "include_regex": [
+      "\\.(?:pdf|docx?|xlsx?|zip)$"
+    ]
+  }
+}

@@ -1,0 +1,51 @@
+
+
+
+curl -X PATCH https://127.0.0.1:3010/api/automations/chatbots/bot_mypiscine_fr
+-H "Content-Type: application/json"
+-d '{"mcp_enabled": true, "mcp_tools": ["list_recent_visitors","send_agent_message"]}'
+
+
+
+wss://chat.piscinesondespro.fr/mcp/ws?token=d591d92c-6ead-4bd9-b36f-4422d275a74b-68548a161ddd40b3b1b08553a85f7cb5&bot_id=bot_mypiscine_fr
+
+
+curl -X POST http://127.0.0.1:3010/api/automations/chatbots/bot_mypiscine_fr/mcp/token/disable -H "x-admin-token: +Alexcaroline12"
+
+curl -X POST http://127.0.0.1:3010/api/automations/chatbots/bot_mypiscine_fr/mcp/token/disable -H "x-admin-token: d591d92c-6ead-4bd9-b36f-4422d275a74b-68548a161ddd40b3b1b08553a85f7cb5"
+
+
+wss://chat.piscinesondespro.fr/mcp/ws?token=d591d92c-6ead-4bd9-b36f-4422d275a74b-68548a161ddd40b3b1b08553a85f7cb5&bot_id=bot_mypiscine_fr
+
+wscat -c "wss://chat.piscinesondespro.fr/mcp/ws?token=d591d92c-6ead-4bd9-b36f-4422d275a74b-68548a161ddd40b3b1b08553a85f7cb5&bot_id=bot_mypiscine_fr"
+
+
+wscat -c "wss://chat.piscinesondespro.fr/mcp/ws?bot_id=bot_mypiscine_fr"
+
+
+token=YOUR_TOKEN&bot_id=bot_mypiscine_fr
+
+
+token=YOUR_TOKEN&
+
+wscat -c "wss://chat.piscinesondespro.fr/mcp/ws?bot_id=bot_mypiscine_fr"
+
+
+
+wscat -c "wss://mpc.piscinesondespro.fr/mcp/ws?bot_id=bot_mypiscine_fr"
+
+
+wscat -c "wss://chat.piscinesondespro.fr/mcp/ws?token=0729397f-dc63-4e20-965c-18bf192100d6-27dda6c71cdc2ae8f8e79b6225c1ffc9&bot_id=bot_mypiscine_fr"
+
+{"jsonrpc":"2.0","id":1,"method":"tools/list"}{"jsonrpc":"2.0","id":1,"method":"tools/list"}
+
+
+wss://mcp.piscinesondespro.fr/mcp/ws/bot/bot_mypiscine_fr
+
+wscat -c "wss://mcp.piscinesondespro.fr/mcp/ws?bot_id=bot_mypiscine_fr"
+
+
+https://mcp.piscinesondespro.fr/mcp/ws?bot_id=bot_mypiscine_fr
+
+
+https://chat.piscinesondespro.fr/:3010/

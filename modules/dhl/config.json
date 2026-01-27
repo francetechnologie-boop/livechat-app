@@ -1,0 +1,10 @@
+{
+  "id": "dhl",
+  "name": "DHL Tracking",
+  "description": "Track DHL shipments via Shipment Tracking – Unified API.",
+  "category": "shipping",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true
+}
+

@@ -1,0 +1,11 @@
+{
+  "id": "grabbing-sensorex",
+  "name": "Grabbing Sensorex",
+  "description": "Sensorex-specific grabbing tools and domain management",
+  "category": "automation",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true,
+  "surfaces": { "main": "Grabbing Sensorex" },
+  "defaultSurface": "main"
+}

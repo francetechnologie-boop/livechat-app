@@ -1,0 +1,9 @@
+{
+  "id": "nohash",
+  "name": "NoHash",
+  "description": "Utility helpers and demos.",
+  "category": "developer",
+  "version": "1.0.0",
+  "defaultInstalled": false,
+  "defaultActive": false
+}

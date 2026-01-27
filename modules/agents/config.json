@@ -1,0 +1,9 @@
+{
+  "id": "agents",
+  "name": "Agents",
+  "description": "Agent features and APIs.",
+  "category": "custom",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true
+}

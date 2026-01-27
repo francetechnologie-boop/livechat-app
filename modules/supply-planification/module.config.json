@@ -1,0 +1,17 @@
+{
+  "name": "supply-planification",
+  "version": "1.0.0",
+  "enabled": true,
+  "hooks": {
+    "onModuleLoaded": "onModuleLoaded",
+    "onModuleDisabled": "onModuleDisabled"
+  },
+  "db": {
+    "tables": [
+      "mod_supply_planification_settings",
+      "mod_supply_planification_inventory_batches",
+      "mod_supply_planification_inventory_batch_lines"
+    ]
+  }
+}
+

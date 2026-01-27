@@ -1,0 +1,9 @@
+{
+  "id": "smartsupp-api",
+  "name": "Smartsupp API",
+  "description": "Smartsupp integration APIs.",
+  "category": "integration",
+  "version": "1.0.0",
+  "defaultInstalled": false,
+  "defaultActive": false
+}

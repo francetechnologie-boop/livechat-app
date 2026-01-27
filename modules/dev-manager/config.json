@@ -1,0 +1,9 @@
+{
+  "id": "dev-manager",
+  "name": "Dev Manager",
+  "description": "Developer utilities and examples.",
+  "category": "developer",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true
+}
