@@ -28,3 +28,6 @@ prompt_next_step.txt
 prompt_next_step.txt.bak
 
 prompt_next_step.txt*
+
+# local prompt files / backups
+prompt_next_step.txt*
