@@ -107,22 +107,38 @@ async function fetchBomMeta(pool, orgId) {
       lower(b.name) AS bom_key,
       b.name AS bom_name,
       COALESCE(mi.sku, b.name) AS item_sku,
-    COALESCE(mi.name, b.description, b.name) AS description,
-    array_remove(array_agg(DISTINCT s.name), NULL) AS suppliers,
-    SUM(COALESCE(bi.quantity, 0)) AS components_per_unit
-  FROM mod_bom_boms b
-  LEFT JOIN mod_bom_bom_items bi ON bi.bom_id = b.id
+      COALESCE(mi.name, b.description, b.name) AS description,
+      COALESCE(mi.procurement_type, '') AS procurement_type,
+      COALESCE(mi.reference, '') AS reference,
+      COALESCE(mi.description_short, '') AS description_short,
+      array_remove(array_agg(DISTINCT COALESCE(s.name, v.name)), NULL) AS suppliers,
+      SUM(COALESCE(bi.quantity, 0)) AS components_per_unit
+    FROM mod_bom_boms b
+    LEFT JOIN mod_bom_bom_items bi ON bi.bom_id = b.id
       AND (($1::int IS NULL AND bi.org_id IS NULL) OR ($1::int IS NOT NULL AND (bi.org_id IS NULL OR bi.org_id = $1)))
     LEFT JOIN mod_bom_items mi ON mi.id = bi.item_id
       AND (($1::int IS NULL AND mi.org_id IS NULL) OR ($1::int IS NOT NULL AND (mi.org_id IS NULL OR mi.org_id = $1)))
-  LEFT JOIN mod_bom_suppliers s ON s.id = mi.supplier_id
-  WHERE (($1::int IS NULL AND b.org_id IS NULL) OR ($1::int IS NOT NULL AND (b.org_id IS NULL OR b.org_id = $1)))
-  GROUP BY
-    lower(b.name),
-    b.name,
-    COALESCE(mi.sku, b.name),
-    COALESCE(mi.name, b.description, b.name)
-`;
+    LEFT JOIN mod_bom_suppliers s ON s.id = mi.supplier_id
+    LEFT JOIN LATERAL (
+      SELECT sv.name
+        FROM mod_bom_item_vendors iv
+        LEFT JOIN mod_bom_suppliers sv ON sv.id = iv.supplier_id
+       WHERE iv.item_id = mi.id
+         AND (($1::int IS NULL AND iv.org_id IS NULL) OR ($1::int IS NOT NULL AND (iv.org_id IS NULL OR iv.org_id = $1)))
+       ORDER BY iv.preferred DESC, COALESCE(iv.priority, 999) ASC, iv.id DESC
+       LIMIT 1
+    ) v ON TRUE
+    WHERE (($1::int IS NULL AND b.org_id IS NULL) OR ($1::int IS NOT NULL AND (b.org_id IS NULL OR b.org_id = $1)))
+    GROUP BY
+      lower(b.name),
+      b.name,
+      COALESCE(mi.sku, b.name),
+      COALESCE(mi.name, b.description, b.name),
+      COALESCE(mi.procurement_type, ''),
+      COALESCE(mi.reference, ''),
+      COALESCE(mi.description_short, ''),
+      v.name
+  `;
   const r = await pool.query(sql, args);
   return r.rows || [];
 }
@@ -277,6 +293,7 @@ export function registerSupplyPlanificationNeedsRoutes(app, ctx = {}, utils = {}
       const states = parseIntList(req.query?.states || req.query?.state || req.query?.order_states);
       const shops = parseIntList(req.query?.shops || req.query?.shop_ids || req.query?.shop);
       const supplierRaw = String(req.query?.supplier || req.query?.supplier_name || '').trim();
+      const procurementFilter = String(req.query?.procurement || req.query?.procurement_type || 'Stocké').trim();
 
       const now = new Date();
       const startYear = now.getFullYear() - years + 1;
@@ -330,6 +347,8 @@ export function registerSupplyPlanificationNeedsRoutes(app, ctx = {}, utils = {}
         if (!key) continue;
         const meta = metaMap.get(key) || null;
         const suppliers = Array.isArray(meta?.suppliers) ? meta.suppliers : [];
+        const procurementType = String(meta?.procurement_type || '').trim();
+        if (procurementFilter && procurementType !== procurementFilter) continue;
         if (supplierNeedle) {
           const matchesSupplier = suppliers.some((s) => String(s || '').toLowerCase().includes(supplierNeedle));
           if (!matchesSupplier) continue;
@@ -342,7 +361,10 @@ export function registerSupplyPlanificationNeedsRoutes(app, ctx = {}, utils = {}
           bom_name: bomName,
           item: meta?.item_sku || bomName,
           description: meta?.description || bomName,
+          reference: meta?.reference || null,
+          description_short: meta?.description_short || null,
           suppliers,
+          procurement_type: procurementType || null,
           units_sold: Number.isFinite(unitsSold) ? unitsSold : 0,
           component_need: Number.isFinite(unitsSold) ? unitsSold * (Number.isFinite(perUnit) && perUnit !== 0 ? perUnit : 1) : 0,
         });
@@ -363,6 +385,7 @@ export function registerSupplyPlanificationNeedsRoutes(app, ctx = {}, utils = {}
           states,
           shops,
           supplier: supplierRaw || null,
+          procurement_type: procurementFilter || null,
         },
         rows,
       });

@@ -14,6 +14,8 @@ function normalizeMonths(rows) {
         supplier: Array.isArray(r.suppliers) && r.suppliers.length ? r.suppliers[0] : '',
         suppliers: Array.isArray(r.suppliers) ? r.suppliers : [],
         item: r.item || r.bom_name || '—',
+        reference: r.reference || '',
+        description_short: r.description_short || '',
         description: r.description || '',
         year: yr || null,
         months: Array(12).fill(0),
@@ -29,11 +31,6 @@ function normalizeMonths(rows) {
     const avg = row.months.length ? total / row.months.length : 0;
     return { ...row, total, avg };
   });
-  out.sort((a, b) => {
-    if (a.supplier !== b.supplier) return String(a.supplier || '').localeCompare(String(b.supplier || ''));
-    if (a.item !== b.item) return String(a.item || '').localeCompare(String(b.item || ''));
-    return Number(b.year || 0) - Number(a.year || 0);
-  });
   return out;
 }
 
@@ -47,9 +44,20 @@ export default function NeedsPerMonthPanel() {
     states: '2,3,4,5',
     shops: '',
     supplier: '',
+    procurement: 'Stocké',
   });
+  const [sort, setSort] = useState({ key: 'supplier', dir: 'asc' });
+  const [textFilter, setTextFilter] = useState('');
 
   const grid = useMemo(() => normalizeMonths(rows), [rows]);
+  const procurementOptions = useMemo(() => {
+    const set = new Set();
+    for (const r of rows || []) {
+      const v = String(r.procurement_type || '').trim();
+      if (v) set.add(v);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [rows]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -60,6 +68,7 @@ export default function NeedsPerMonthPanel() {
       if (filters.states.trim()) search.set('states', filters.states.trim());
       if (filters.shops.trim()) search.set('shops', filters.shops.trim());
       if (filters.supplier.trim()) search.set('supplier', filters.supplier.trim());
+      if (filters.procurement.trim()) search.set('procurement', filters.procurement.trim());
       const res = await api(`/api/supply-planification/needs/monthly?${search.toString()}`);
       setRows(res.rows || []);
       setParams(res.params || null);
@@ -118,6 +127,34 @@ export default function NeedsPerMonthPanel() {
             placeholder="Sensorex"
           />
         </div>
+        <div>
+          <div className="text-xs text-gray-500">Procurement</div>
+          <select
+            value={filters.procurement}
+            onChange={(e) => setFilters((f) => ({ ...f, procurement: e.target.value }))}
+            className="border rounded px-2 py-1 text-sm w-40"
+          >
+            <option value="">(all)</option>
+            <option value="Stocké">Stocké</option>
+            {procurementOptions
+              .filter((p) => p !== 'Stocké')
+              .map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+          </select>
+        </div>
+        <div className="flex-1 min-w-[200px]">
+          <div className="text-xs text-gray-500">Text filter (supplier/item/ref/desc)</div>
+          <input
+            type="text"
+            value={textFilter}
+            onChange={(e) => setTextFilter(e.target.value)}
+            className="border rounded px-2 py-1 text-sm w-full"
+            placeholder="Search..."
+          />
+        </div>
         <button
           type="button"
           onClick={load}
@@ -129,54 +166,110 @@ export default function NeedsPerMonthPanel() {
         {params ? (
           <div className="text-xs text-gray-500">
             Start: {params.start_date} · Years: {params.years} · States: {params.states?.join(', ') || '—'} · Shops:{' '}
-            {params.shops?.join(', ') || 'all'}
+            {params.shops?.join(', ') || 'all'} · Procurement: {params.procurement_type || filters.procurement || '—'}
           </div>
         ) : null}
       </div>
 
       {error ? <div className="text-sm text-red-600">Failed: {error}</div> : null}
 
-      <div className="overflow-auto rounded border bg-white shadow-sm">
-        <table className="min-w-[1100px] w-full text-sm">
-          <thead className="bg-gray-50">
+      <div className="overflow-auto max-h-[70vh] rounded border bg-white shadow-sm">
+        <table className="min-w-[1200px] w-full text-sm">
+          <thead className="bg-gray-50 sticky top-0 z-10">
             <tr className="text-xs uppercase text-gray-600">
-              <th className="px-2 py-2 text-left">Supplier</th>
-              <th className="px-2 py-2 text-left">Item</th>
-              <th className="px-2 py-2 text-left">Description</th>
+              {[
+                { key: 'supplier', label: 'Supplier', align: 'text-left' },
+                { key: 'item', label: 'Item', align: 'text-left' },
+                { key: 'reference', label: 'Reference', align: 'text-left' },
+                { key: 'description', label: 'Description', align: 'text-left' },
+                { key: 'description_short', label: 'Desc. short', align: 'text-left' },
+              ].map((col) => (
+                <th
+                  key={col.key}
+                  className={`px-2 py-2 ${col.align} cursor-pointer select-none`}
+                  onClick={() =>
+                    setSort((prev) =>
+                      prev.key === col.key
+                        ? { key: col.key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+                        : { key: col.key, dir: 'asc' }
+                    )
+                  }
+                >
+                  {col.label}
+                  {sort.key === col.key ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}
+                </th>
+              ))}
               <th className="px-2 py-2 text-center">Year</th>
               {Array.from({ length: 12 }).map((_, idx) => (
                 <th key={idx} className="px-2 py-2 text-right">
                   {idx + 1}
                 </th>
               ))}
-              <th className="px-2 py-2 text-right">Total</th>
-              <th className="px-2 py-2 text-right">Avg</th>
+              <th className="px-2 py-2 text-right cursor-pointer select-none" onClick={() => setSort((prev) => ({
+                key: 'total',
+                dir: prev.key === 'total' && prev.dir === 'asc' ? 'desc' : 'asc',
+              }))}>
+                Total{sort.key === 'total' ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}
+              </th>
+              <th className="px-2 py-2 text-right cursor-pointer select-none" onClick={() => setSort((prev) => ({
+                key: 'avg',
+                dir: prev.key === 'avg' && prev.dir === 'asc' ? 'desc' : 'asc',
+              }))}>
+                Avg{sort.key === 'avg' ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}
+              </th>
             </tr>
           </thead>
           <tbody>
+            {(grid
+              .filter((row) => {
+                const needle = textFilter.trim().toLowerCase();
+                if (!needle) return true;
+                const hay = [
+                  row.supplier,
+                  row.item,
+                  row.reference,
+                  row.description_short,
+                ]
+                  .map((v) => String(v || '').toLowerCase())
+                  .join(' ');
+                return hay.includes(needle);
+              })
+              .sort((a, b) => {
+                const dirMul = sort.dir === 'desc' ? -1 : 1;
+                const getVal = (row) => {
+                  if (sort.key === 'total' || sort.key === 'avg') return Number(row[sort.key] || 0);
+                  if (sort.key === 'year') return Number(row.year || 0);
+                  return String(row[sort.key] || '');
+                };
+                const av = getVal(a);
+                const bv = getVal(b);
+                if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dirMul;
+                return String(av).localeCompare(String(bv)) * dirMul;
+              }) || []
+            ).map((row, idx) => (
+              <tr key={`${row.item}-${row.year}-${idx}`} className={idx % 2 ? 'bg-gray-50' : ''}>
+                <td className="px-2 py-2">{row.supplier || '—'}</td>
+                <td className="px-2 py-2 font-mono text-xs">{row.item}</td>
+                <td className="px-2 py-2 font-mono text-xs">{row.reference || '—'}</td>
+                <td className="px-2 py-2">{row.description}</td>
+                <td className="px-2 py-2">{row.description_short || '—'}</td>
+                <td className="px-2 py-2 text-center">{row.year ?? '—'}</td>
+                {row.months.map((v, i) => (
+                  <td key={i} className={`px-2 py-2 text-right ${v < 0 ? 'text-red-600' : ''}`}>
+                    {Number(v).toLocaleString()}
+                  </td>
+                ))}
+                <td className="px-2 py-2 text-right font-semibold">{row.total.toLocaleString()}</td>
+                <td className="px-2 py-2 text-right text-gray-700">{row.avg.toFixed(1)}</td>
+              </tr>
+            ))}
             {grid.length === 0 ? (
               <tr>
-                <td className="px-2 py-3 text-center text-gray-500" colSpan={17}>
+                <td className="px-2 py-3 text-center text-gray-500" colSpan={19}>
                   {loading ? 'Loading…' : 'No data for this window.'}
                 </td>
               </tr>
-            ) : (
-              grid.map((row, idx) => (
-                <tr key={`${row.item}-${row.year}-${idx}`} className={idx % 2 ? 'bg-gray-50' : ''}>
-                  <td className="px-2 py-2">{row.supplier || '—'}</td>
-                  <td className="px-2 py-2 font-mono text-xs">{row.item}</td>
-                  <td className="px-2 py-2">{row.description}</td>
-                  <td className="px-2 py-2 text-center">{row.year ?? '—'}</td>
-                  {row.months.map((v, i) => (
-                    <td key={i} className={`px-2 py-2 text-right ${v < 0 ? 'text-red-600' : ''}`}>
-                      {Number(v).toLocaleString()}
-                    </td>
-                  ))}
-                  <td className="px-2 py-2 text-right font-semibold">{row.total.toLocaleString()}</td>
-                  <td className="px-2 py-2 text-right text-gray-700">{row.avg.toFixed(1)}</td>
-                </tr>
-              ))
-            )}
+            ) : null}
           </tbody>
         </table>
       </div>
