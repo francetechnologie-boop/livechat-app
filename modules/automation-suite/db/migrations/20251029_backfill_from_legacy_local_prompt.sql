@@ -40,6 +40,14 @@ BEGIN
   ) INTO has_local;
 
   IF has_local THEN
+    -- Ensure optional columns exist to simplify the insert
+    BEGIN
+      EXECUTE 'ALTER TABLE public.local_prompt ADD COLUMN IF NOT EXISTS model TEXT';
+    EXCEPTION WHEN others THEN NULL; END;
+    BEGIN
+      EXECUTE 'ALTER TABLE public.local_prompt ADD COLUMN IF NOT EXISTS vector_store_id TEXT';
+    EXCEPTION WHEN others THEN NULL; END;
+
     INSERT INTO mod_automation_suite_prompt_config (id, org_id, name, dev_message, messages, tools, openai_api_key, prompt_id, prompt_version, model, vector_store_id, vector_store_ids, metadata, created_at, updated_at)
     SELECT
       (lp.id)::text AS id,
@@ -61,4 +69,3 @@ BEGIN
     ON CONFLICT (id) DO NOTHING;
   END IF;
 END $$;
-

@@ -307,12 +307,23 @@ export default function ModuleManager() {
     setLoading(true);
     setError(null);
     try {
-      const [res, resMounted] = await Promise.all([
-        fetch("/api/modules", { credentials: 'include' }),
+      const [resMounted] = await Promise.all([
         fetch('/api/module-manager/mounted', { credentials: 'include' })
       ]);
-      if (!res.ok) throw new Error(await res.text());
-      const j = await res.json();
+
+      // Prefer legacy endpoint, but fall back to server-level Module Manager list when missing.
+      let res = await fetch("/api/modules", { credentials: 'include' });
+      let j = null;
+      if (!res.ok && res.status === 404) {
+        res = await fetch("/api/module-manager/modules", { credentials: 'include' });
+        if (!res.ok) throw new Error(await res.text());
+        const alt = await res.json().catch(() => ({}));
+        const items = Array.isArray(alt.items) ? alt.items : [];
+        j = { modules: items.map((it) => ({ ...it, id: it.id || it.module_name })) };
+      } else {
+        if (!res.ok) throw new Error(await res.text());
+        j = await res.json();
+      }
       const mounted = (resMounted.ok ? await resMounted.json().catch(()=>({})) : {});
       const mountedSet = new Set(Array.isArray(mounted.items) ? mounted.items.map(it => (it && it.id) ? String(it.id) : '').filter(Boolean) : []);
       const list = Array.isArray(j.modules) ? j.modules : [];
@@ -350,10 +361,25 @@ export default function ModuleManager() {
   const fetchModulesLibrary = async () => {
     try {
       const r = await fetch('/api/sidebar/modules', { credentials: 'include' });
-      if (!r.ok) { setModulesLibrary([]); return; }
-      const j = await r.json();
-      const items = Array.isArray(j.items) ? j.items : [];
-      setModulesLibrary(items);
+      if (r.ok) {
+        const j = await r.json();
+        const items = Array.isArray(j.items) ? j.items : [];
+        setModulesLibrary(items);
+        return;
+      }
+      // 404: build a minimal "modules library" from Module Manager list
+      if (r.status === 404) {
+        const rr = await fetch('/api/module-manager/modules', { credentials: 'include' });
+        if (!rr.ok) { setModulesLibrary([]); return; }
+        const jj = await rr.json().catch(() => ({}));
+        const items = Array.isArray(jj.items) ? jj.items : [];
+        setModulesLibrary(items.map((m) => {
+          const id = m.id || m.module_name || '';
+          return { id, entry_id: id ? `mod-${id}` : '', label: id || '', hash: id ? `#/${id}` : '' };
+        }).filter((x) => x.id));
+        return;
+      }
+      setModulesLibrary([]);
     } catch { setModulesLibrary([]); }
   };
   useEffect(() => { fetchModulesLibrary(); }, []);
@@ -372,6 +398,11 @@ export default function ModuleManager() {
         if (parentId) params.set("parent_entry_id", parentId);
         const r = await fetch("/api/sidebar/tree?" + params.toString(), { credentials: 'include' });
         if (!r.ok) {
+          // Treat 404 as an empty/fallback tree instead of surfacing an error
+          if (r.status === 404) {
+            try { setTreeFallback(true); } catch {}
+            return [];
+          }
           try { const t = await r.text(); pushDebugError({ source: "api:/api/sidebar/tree", error: 'HTTP ' + r.status + ': ' + t }); } catch { pushDebugError({ source: "api:/api/sidebar/tree", error: 'HTTP ' + r.status }); }
           throw new Error('sidebar_tree_http_' + r.status);
         }
@@ -386,7 +417,7 @@ export default function ModuleManager() {
       let libRes;
       try {
         libRes = await fetch('/api/sidebar', { credentials: 'include' });
-        if (!libRes.ok) {
+        if (!libRes.ok && libRes.status !== 404) {
           try { const t = await libRes.text(); pushDebugError({ source: 'api:/api/sidebar', error: 'HTTP ' + libRes.status + ': ' + t }); }
           catch { pushDebugError({ source: 'api:/api/sidebar', error: 'HTTP ' + libRes.status }); }
         }

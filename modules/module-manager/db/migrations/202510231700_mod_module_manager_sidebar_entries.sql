@@ -11,7 +11,7 @@ BEGIN
 
   -- 2) Create new table if it still does not exist
   IF to_regclass('public.mod_module_manager_sidebar_entries') IS NULL THEN
-    EXECUTE $$
+    EXECUTE '
       CREATE TABLE public.mod_module_manager_sidebar_entries (
         id BIGSERIAL PRIMARY KEY,
         entry_id TEXT NOT NULL,
@@ -27,8 +27,7 @@ BEGIN
         parent_entry_id TEXT NULL,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
-      );
-    $$;
+      )';
   END IF;
 
   -- 3) Non-breaking column additions (for older installs)
@@ -58,18 +57,18 @@ BEGIN
 
   -- 5) De-duplicate legacy rows and add composite unique constraint
   BEGIN
-    EXECUTE $$
+    EXECUTE '
       WITH ranked AS (
         SELECT id,
                ROW_NUMBER() OVER (
-                 PARTITION BY COALESCE(org_id,''), level, COALESCE(parent_entry_id,''), entry_id
+                 PARTITION BY COALESCE(org_id, ''''), level, COALESCE(parent_entry_id, ''''), entry_id
                  ORDER BY id
                ) AS rn
         FROM public.mod_module_manager_sidebar_entries
       )
       DELETE FROM public.mod_module_manager_sidebar_entries s USING ranked r
       WHERE s.id = r.id AND r.rn > 1
-    $$;
+    ';
   EXCEPTION WHEN others THEN END;
   BEGIN
     EXECUTE 'ALTER TABLE public.mod_module_manager_sidebar_entries ADD CONSTRAINT uq_mod_mm_sidebar UNIQUE (org_id, level, parent_entry_id, entry_id)';
@@ -80,4 +79,3 @@ BEGIN
     EXECUTE 'CREATE OR REPLACE VIEW public.sidebar_entries AS SELECT * FROM public.mod_module_manager_sidebar_entries';
   EXCEPTION WHEN others THEN END;
 END $$;
-

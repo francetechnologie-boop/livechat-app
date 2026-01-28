@@ -1,5 +1,9 @@
 -- Add detail columns to suppliers
 DO $$ BEGIN
+  IF to_regclass('public.mod_bom_suppliers') IS NULL THEN
+    RETURN;
+  END IF;
+
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='mod_bom_suppliers' AND column_name='street_address'
   ) THEN
@@ -46,4 +50,3 @@ DO $$ BEGIN
     ALTER TABLE mod_bom_suppliers ADD COLUMN vendor_code TEXT NULL;
   END IF;
 END $$;
-

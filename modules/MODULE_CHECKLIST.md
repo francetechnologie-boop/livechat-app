@@ -42,6 +42,10 @@ This checklist is mandatory for any change that adds HTTP routes or modifies the
   - Provide both `up` (apply) and `down` (revert) or make it idempotent SQL with guards.
   - Guarded FKs: follow AGENTS.md template (check table/PK exists, `ON DELETE SET NULL`).
   - Idempotency: wrap `ALTER TABLE ADD COLUMN` / `CREATE INDEX` in `DO $$ BEGIN ... EXCEPTION WHEN duplicate_* THEN NULL; END $$;`.
+  - Avoid PostgreSQL-only syntax that breaks on older hosts (e.g., `ADD CONSTRAINT IF NOT EXISTS`). Use a guarded `DO $$ BEGIN ALTER TABLE ... ADD CONSTRAINT ...; EXCEPTION WHEN duplicate_object THEN NULL; END $$;` instead.
+  - Run a quick syntax check locally before committing:
+    - `DATABASE_URL=postgresql://user:pass@host:5432/db psql -X -v ON_ERROR_STOP=1 -f modules/<id>/db/migrations/<file>.sql >/tmp/mig-check.log`
+    - If you can’t reach the target DB, at least run against a local Postgres container.
 - When “ensures” are acceptable
   - For modules that intentionally do not run migrations in some environments, add idempotent ensure helpers under `modules/<id>/backend/utils/ensure.js` and call them in `backend/index.js` (and/or on first route access) to bridge missing columns.
   - Even then, prefer a real migration in the repo so deploys are predictable.

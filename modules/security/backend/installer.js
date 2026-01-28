@@ -62,6 +62,9 @@ export async function installModule() {
 }
 
 if (import.meta.url === pathToFileURL(__filename).href || (process.argv[1] && path.resolve(process.argv[1]) === __filename)) {
-  installModule().catch((err) => { console.error('Installer failed:', err?.message || err); process.exitCode = 1; });
+  installModule().catch((err) => {
+    const message = err && err.message ? err.message : err;
+    console.error('Installer failed:', message);
+    process.exitCode = 1;
+  });
 }
-

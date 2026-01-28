@@ -7,12 +7,20 @@ CREATE TABLE IF NOT EXISTS public.mod_security_commands (
   updated_at TIMESTAMP DEFAULT NOW()
 );
 
-ALTER TABLE public.mod_security_commands
-  ADD CONSTRAINT IF NOT EXISTS uq_security_commands_org_name UNIQUE (org_id, name);
-
 CREATE UNIQUE INDEX IF NOT EXISTS idx_security_commands_global
   ON public.mod_security_commands (name)
   WHERE org_id IS NULL;
+
+-- Guarded unique constraint (IF NOT EXISTS not supported on older PostgreSQL)
+DO $$ BEGIN
+  BEGIN
+    ALTER TABLE public.mod_security_commands
+      ADD CONSTRAINT uq_security_commands_org_name UNIQUE (org_id, name);
+  EXCEPTION
+    WHEN duplicate_object THEN NULL;
+    WHEN others THEN NULL;
+  END;
+END $$;
 
 DO $$ BEGIN
   IF to_regclass('public.organizations') IS NOT NULL AND EXISTS (

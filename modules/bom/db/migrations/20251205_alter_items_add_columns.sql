@@ -1,5 +1,9 @@
 -- Extend mod_bom_items to store richer item data
 DO $$ BEGIN
+  IF to_regclass('public.mod_bom_items') IS NULL THEN
+    RETURN;
+  END IF;
+
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='mod_bom_items' AND column_name='code'
   ) THEN
@@ -40,4 +44,3 @@ END $$;
 -- Helpful indexes for lookups
 CREATE INDEX IF NOT EXISTS idx_bom_items_code ON mod_bom_items(code);
 CREATE INDEX IF NOT EXISTS idx_bom_items_reference ON mod_bom_items(reference);
-

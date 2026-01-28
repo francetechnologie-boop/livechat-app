@@ -10,7 +10,7 @@ import pgPkg from "pg";
 import { createLogger } from "./src/core/logger.js";
 import { textToSafeHTML, sanitizeAgentHtmlServer } from "./src/shared/safeHtml.js";
 import { createAuthModule } from "./src/modules/auth/index.js";
-import { loadModuleHooks, loadModuleRoutes } from "./src/modules/loader.js";
+import { loadModuleHooks, loadModuleRoutes, getLoadedModules as getRuntimeLoadedModules } from "./src/modules/loader.js";
 // Server is decoupled: modules own their routes, middleware and websockets.
 
 const __filename = fileURLToPath(import.meta.url);
@@ -397,36 +397,41 @@ try {
           FROM public.mod_module_manager_modules
          ORDER BY module_name ASC
       `);
-      // Inspect runtime app router to detect mounted module prefixes
+      // Prefer module loader state (accurate) over Express router inspection.
       const mountedSet = (() => {
         try {
-          const seen = new Set();
-          const stack = (app && app._router && Array.isArray(app._router.stack)) ? app._router.stack : [];
-          const extract = (layer) => {
-            try {
-              if (layer && layer.route && layer.route.path) {
-                const path = String(layer.route.path || '');
-                if (!path.startsWith('/api/')) return;
-                const seg = path.split('/').filter(Boolean); // [ 'api', '<module>', ... ]
-                const modId = seg.length >= 2 ? seg[1] : '';
-                if (modId) seen.add(modId);
-              } else if (layer && layer.name === 'router' && Array.isArray(layer.handle && layer.handle.stack)) {
-                for (const sub of layer.handle.stack) extract(sub);
-              }
-            } catch {}
-          };
-          for (const l of stack) extract(l);
-          return seen;
+          const list = typeof getRuntimeLoadedModules === 'function' ? (getRuntimeLoadedModules() || []) : [];
+          return new Set(list.map((m) => (m && m.id) ? String(m.id) : '').filter(Boolean));
         } catch { return new Set(); }
       })();
-      const items = (r.rows || []).map((row) => ({ ...row, mounted: mountedSet.has(String(row.id)) }));
+      const readMeta = (id) => {
+        try {
+          const modId = String(id || '').trim();
+          if (!modId) return {};
+          const cfgPath = path.join(__dirname, '..', 'modules', modId, 'config.json');
+          if (!fs.existsSync(cfgPath)) return {};
+          const j = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+          return {
+            name: j && j.name ? String(j.name) : undefined,
+            description: j && j.description ? String(j.description) : undefined,
+            category: j && j.category ? String(j.category) : undefined,
+            defaultInstalled: !!(j && j.defaultInstalled),
+            defaultActive: !!(j && j.defaultActive),
+          };
+        } catch { return {}; }
+      };
+      const items = (r.rows || []).map((row) => {
+        const meta = readMeta(row && row.id);
+        return { ...row, ...meta, mounted: mountedSet.has(String(row.id)) };
+      });
       return res.json({ ok:true, items });
     } catch (e) { return res.status(500).json({ ok:false, error:'list_failed', message: e?.message || String(e) }); }
   });
 
   // Reload module hooks and routes (soft reload). Requires admin token.
   app.post('/api/module-manager/reload', async (req, res) => {
-    if (!hasAdminTokenNonDestructive(req)) return res.status(401).json({ ok:false, error:'unauthorized' });
+    // Accept either admin token header or cookie-based admin session.
+    if (!requireAdminAuth(req, res)) return;
     try {
       await loadModuleHooks({ app, pool: modulePool, requireAdmin: requireAdminAuth, getSetting, setSetting, logToFile, extras: { server, getLogFilePath, isLogEnabled, isLogStdout, setLogStdout } });
       await loadModuleRoutes({ app, pool: modulePool, requireAuth, requireAdmin: requireAdminAuth, getSetting, setSetting, logToFile, extras: { server, getLogFilePath, isLogEnabled, isLogStdout, setLogStdout, io, dbSchema, ensureVisitorExists, upsertVisitorColumns, sanitizeAgentHtmlServer, textToSafeHTML, getOpenaiApiKey, getMcpToken, publicBaseFromReq } });
@@ -434,6 +439,288 @@ try {
     } catch (e) { return res.status(500).json({ ok:false, error:'reload_failed', message: e?.message || String(e) }); }
   });
 } catch (e) { try { logToFile("module-manager helper routes failed: " + (e?.message || e)); } catch {} }
+
+// Legacy compatibility endpoints for older frontend bundles.
+// Modules should own their routes, but some deployments still request:
+//   - GET /api/modules
+//   - GET /api/sidebar, /api/sidebar/tree, /api/sidebar/modules
+// If the Module Manager module is not mounted (or migrations are partially applied),
+// these handlers keep the UI functional and always return JSON.
+try {
+  function readModuleManifestMeta(id) {
+    try {
+      const modId = String(id || '').trim();
+      if (!modId) return {};
+      const cfgPath = path.join(__dirname, '..', 'modules', modId, 'config.json');
+      if (!fs.existsSync(cfgPath)) return {};
+      const raw = fs.readFileSync(cfgPath, 'utf8');
+      const j = JSON.parse(raw);
+      return {
+        name: j && j.name ? String(j.name) : undefined,
+        description: j && j.description ? String(j.description) : undefined,
+        category: j && j.category ? String(j.category) : undefined,
+        defaultInstalled: !!(j && j.defaultInstalled),
+        defaultActive: !!(j && j.defaultActive),
+      };
+    } catch {
+      return {};
+    }
+  }
+
+  async function pgTableExists(tableName) {
+    try {
+      const p = await getPg();
+      if (!p) return false;
+      const r = await p.query(`SELECT to_regclass($1) AS reg`, [String(tableName)]);
+      return !!(r && r.rows && r.rows[0] && r.rows[0].reg);
+    } catch {
+      return false;
+    }
+  }
+
+  async function readModulesFromDb() {
+    const p = await getPg();
+    if (!p) return [];
+    if (!(await pgTableExists('public.mod_module_manager_modules'))) return [];
+    const r = await p.query(`
+      SELECT module_name AS id,
+             (install::int = 1) AS installed,
+             (active::int = 1) AS active,
+             version,
+             installed_at,
+             updated_at
+        FROM public.mod_module_manager_modules
+       ORDER BY module_name ASC
+    `);
+    const rows = r.rows || [];
+    // Enrich with manifest metadata so UI can render Category/labels even in fallback mode.
+    return rows.map((row) => {
+      const id = String(row && row.id ? row.id : '').trim();
+      const meta = readModuleManifestMeta(id);
+      return { ...row, ...meta };
+    });
+  }
+
+  function buildFallbackSidebarFromModules(modRows) {
+    const out = [];
+    const seen = new Set();
+    const push = (id, pos) => {
+      const mid = String(id || '').trim();
+      if (!mid || seen.has(mid)) return;
+      seen.add(mid);
+      out.push({
+        entry_id: `mod-${mid}`,
+        label: mid,
+        hash: `#/${mid}`,
+        position: pos,
+        icon: null,
+        logo: null,
+        active: true,
+        org_id: 'org_default',
+        attached: true,
+        level: 0,
+        parent_entry_id: null,
+        type: 'module',
+      });
+    };
+    push('module-manager', 0);
+    let pos = 1;
+    for (const r of Array.isArray(modRows) ? modRows : []) {
+      if (!r || !r.active) continue;
+      push(r.id, pos++);
+    }
+    return out;
+  }
+
+  app.get('/api/modules', async (req, res) => {
+    // Used by the main app shell to detect active modules after login.
+    // Prefer auth gating (cookie/session) when available, but keep it non-admin.
+    try {
+      if (typeof requireAuth === 'function') { if (!requireAuth(req, res)) return; }
+    } catch {}
+    try {
+      const items = await readModulesFromDb();
+      return res.json({ ok: true, modules: items, fallback: true });
+    } catch {
+      return res.status(503).json({ ok: false, error: 'db_unavailable' });
+    }
+  });
+
+  app.get('/api/sidebar', async (_req, res) => {
+    try {
+      try { res.setHeader('Cache-Control', 'no-store'); } catch {}
+      const p = await getPg();
+      if (!p) return res.status(503).json({ ok: false, error: 'db_unavailable' });
+
+      const table = 'public.mod_module_manager_sidebar_entries';
+      if (!(await pgTableExists(table))) {
+        const mods = await readModulesFromDb();
+        return res.json({ ok: true, items: buildFallbackSidebarFromModules(mods), fallback: true });
+      }
+      const r = await p.query(
+        `SELECT entry_id, label, hash, position, icon, logo, active, org_id, attached, level, parent_entry_id, type
+           FROM public.mod_module_manager_sidebar_entries
+          WHERE active IS TRUE
+            AND (org_id = 'org_default' OR org_id IS NULL)
+          ORDER BY position ASC, label ASC`
+      );
+      return res.json({ ok: true, items: r.rows || [], fallback: true });
+    } catch {
+      return res.status(503).json({ ok: false, error: 'db_unavailable' });
+    }
+  });
+
+  app.get('/api/sidebar/tree', async (req, res) => {
+    try {
+      try { res.setHeader('Cache-Control', 'no-store'); } catch {}
+      const p = await getPg();
+      if (!p) return res.status(503).json({ ok: false, error: 'db_unavailable' });
+
+      const table = 'public.mod_module_manager_sidebar_entries';
+      if (!(await pgTableExists(table))) {
+        const mods = await readModulesFromDb();
+        return res.json({ ok: true, items: buildFallbackSidebarFromModules(mods), fallback: true });
+      }
+
+      const lvl = Number((req.query && req.query.level) || 0) | 0;
+      const parent = (req.query && req.query.parent_entry_id) ? String(req.query.parent_entry_id) : null;
+      const r = await p.query(
+        `SELECT entry_id, label, hash, position, icon, logo, active, org_id, level, parent_entry_id, type, attached
+           FROM public.mod_module_manager_sidebar_entries
+          WHERE active IS TRUE
+            AND attached IS TRUE
+            AND (org_id = 'org_default' OR org_id IS NULL)
+            AND level = $1::smallint
+            AND ( ($2::text IS NULL AND parent_entry_id IS NULL) OR ($2::text IS NOT NULL AND parent_entry_id = $2::text) )
+          ORDER BY position ASC, label ASC`,
+        [lvl, parent]
+      );
+      return res.json({ ok: true, items: r.rows || [], fallback: true });
+    } catch {
+      return res.status(503).json({ ok: false, error: 'db_unavailable' });
+    }
+  });
+
+  app.get('/api/sidebar/modules', async (_req, res) => {
+    try {
+      const mods = await readModulesFromDb();
+      const items = (Array.isArray(mods) ? mods : [])
+        .map((m) => {
+          const id = String(m && m.id ? m.id : '').trim();
+          if (!id) return null;
+          return {
+            id,
+            entry_id: `mod-${id}`,
+            label: (m && m.name) ? String(m.name) : id,
+            hash: `#/${id}`,
+            type: 'module',
+            active: !!m.active,
+            install: !!m.installed,
+            version: m.version || null,
+            routes: [''],
+          };
+        })
+        .filter(Boolean);
+      return res.json({ ok: true, items, fallback: true });
+    } catch {
+      return res.json({ ok: true, items: [], fallback: true });
+    }
+  });
+
+  // Some frontend builds probe these endpoints to decide whether to show the Module Manager UI.
+  // Provide lightweight aliases so the UI doesn't hard-fail when module-manager isn't mounted.
+  app.get('/api/module-manager/mounted', async (_req, res) => {
+    try {
+      const list = typeof getRuntimeLoadedModules === 'function' ? (getRuntimeLoadedModules() || []) : [];
+      const ids = Array.from(new Set(list.map((m) => (m && m.id) ? String(m.id) : '').filter(Boolean))).sort();
+      const items = ids.map((id) => ({ id }));
+      return res.json({ ok: true, items, mounted: true, count: items.length, fallback: true });
+    } catch {
+      return res.json({ ok: true, items: [], mounted: false, count: 0, fallback: true });
+    }
+  });
+
+  // Alias to /api/module-manager/reload for older UIs.
+  app.post('/api/module-manager/mount', async (req, res) => {
+    if (!requireAdminAuth(req, res)) return;
+    try {
+      await loadModuleHooks({ app, pool: modulePool, requireAdmin: requireAdminAuth, getSetting, setSetting, logToFile, extras: { server, getLogFilePath, isLogEnabled, isLogStdout, setLogStdout } });
+      await loadModuleRoutes({ app, pool: modulePool, requireAuth, requireAdmin: requireAdminAuth, getSetting, setSetting, logToFile, extras: { server, getLogFilePath, isLogEnabled, isLogStdout, setLogStdout, io, dbSchema, ensureVisitorExists, upsertVisitorColumns, sanitizeAgentHtmlServer, textToSafeHTML, getOpenaiApiKey, getMcpToken, publicBaseFromReq } });
+      return res.json({ ok: true, mounted: true, reloaded: true });
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: 'mount_failed', message: e?.message || String(e) });
+    }
+  });
+
+  // Compatibility: migrations listing used by Module Manager UI.
+  app.get('/api/modules/:id/migrations', async (req, res) => {
+    if (!requireAdminAuth(req, res)) return;
+    try {
+      const id = String(req.params.id || '').trim();
+      if (!id) return res.status(400).json({ ok: false, error: 'invalid_module' });
+      const migDir = path.join(__dirname, '..', 'modules', id, 'db', 'migrations');
+      let available = [];
+      try {
+        if (fs.existsSync(migDir)) available = fs.readdirSync(migDir).filter((f) => f.endsWith('.sql')).sort();
+      } catch {}
+
+      const p = await getPg();
+      let applied = [];
+      try {
+        if (p) {
+          const reg = await p.query(`SELECT to_regclass('public.migrations_log') AS reg`).catch(() => null);
+          if (reg && reg.rows && reg.rows[0] && reg.rows[0].reg) {
+            const r = await p.query(
+              `SELECT filename, applied_at
+                 FROM public.migrations_log
+                WHERE module_name = $1
+                ORDER BY applied_at DESC, filename DESC`,
+              [id]
+            );
+            applied = (r.rows || [])
+              .map((row) => ({ filename: String(row.filename || ''), applied_at: row.applied_at || null }))
+              .filter((x) => x.filename);
+          }
+        }
+      } catch {}
+
+      const appliedSet = new Set(applied.map((x) => x.filename));
+      const pending = available.filter((f) => !appliedSet.has(f));
+      return res.json({ ok: true, module: id, module_name: id, available, applied, pending, fallback: true });
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: 'server_error', message: e?.message || String(e) });
+    }
+  });
+
+  // Compatibility: run a module installer (admin only).
+  app.post('/api/modules/:id/run-installer', async (req, res) => {
+    if (!requireAdminAuth(req, res)) return;
+    try {
+      const id = String(req.params.id || '').trim();
+      if (!id) return res.status(400).json({ ok: false, error: 'invalid_module' });
+      const installer = path.join(__dirname, '..', 'modules', id, 'backend', 'installer.js');
+      if (!fs.existsSync(installer)) {
+        return res.status(404).json({ ok: false, error: 'missing_installer' });
+      }
+      const out = await new Promise((resolve) => {
+        const child = spawn(process.execPath, [installer], { stdio: ['ignore', 'pipe', 'pipe'] });
+        let buf = '';
+        const onData = (d) => { try { buf += String(d); if (buf.length > 20000) buf = buf.slice(-20000); } catch {} };
+        child.stdout.on('data', onData);
+        child.stderr.on('data', onData);
+        child.on('exit', (code) => resolve({ code: Number(code || 0), output: buf }));
+        child.on('error', (e) => resolve({ code: 1, output: String(e?.message || e) }));
+      });
+      const ok = out.code === 0;
+      return res.status(ok ? 200 : 500).json({ ok, action: 'run-installer', module: id, code: out.code, output: out.output, fallback: true });
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: 'server_error', message: e?.message || String(e) });
+    }
+  });
+  try { logToFile?.('[legacy] fallback routes mounted: /api/modules + /api/sidebar*'); } catch {}
+} catch (e) {
+  try { logToFile?.(`[legacy] fallback mount failed: ${e?.message || e}`); } catch {}
+}
 
 // Ensure API routes never fall back to HTML responses when something is missing.
 // This prevents frontend `response.json()` crashes when an endpoint is not mounted.

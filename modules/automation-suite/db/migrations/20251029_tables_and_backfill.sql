@@ -55,43 +55,62 @@ CREATE INDEX IF NOT EXISTS mod_as_hub_org_idx ON mod_automation_suite_hub_select
 -- Backfill from legacy JSON config (mod_automation_suite_config)
 -- Chatbots
 DO $$
+DECLARE
+  org_id_type TEXT := NULL;
+  org_expr TEXT := 'NULL::int';
 BEGIN
+  SELECT data_type INTO org_id_type
+    FROM information_schema.columns
+   WHERE table_schema = current_schema()
+     AND table_name = 'organizations'
+     AND column_name = 'id'
+   LIMIT 1;
+  IF org_id_type IN ('integer','bigint','smallint') THEN
+    org_expr := 'CASE WHEN c.org_id ~ ''^[0-9]+$'' THEN CAST(c.org_id AS INT) ELSE NULL END';
+  END IF;
+
   IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='mod_automation_suite_config') THEN
     -- Insert chatbots from JSON array value when key='chatbots'
-    INSERT INTO mod_automation_suite_chatbots (id_bot, org_id, shop_name, lang_iso, name, enabled, created_at, updated_at)
-    SELECT DISTINCT
-      COALESCE((elem->>'id_bot'), (elem->>'id'))::text AS id_bot,
-      c.org_id,
-      (elem->>'shop_name')::text AS shop_name,
-      (elem->>'lang_iso')::text AS lang_iso,
-      NULLIF((elem->>'name')::text, '') AS name,
-      COALESCE((elem->>'enabled')::boolean, TRUE) AS enabled,
-      NOW(), NOW()
-    FROM mod_automation_suite_config c
-    JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(c.value)='array' THEN c.value ELSE '[]'::jsonb END) AS elem ON TRUE
-    WHERE c.key = 'chatbots'
-    ON CONFLICT (id_bot) DO NOTHING;
+    EXECUTE format($SQL$
+      INSERT INTO mod_automation_suite_chatbots (id_bot, org_id, shop_name, lang_iso, name, enabled, created_at, updated_at)
+      SELECT DISTINCT
+        COALESCE((elem->>'id_bot'), (elem->>'id'))::text AS id_bot,
+        %s AS org_id,
+        (elem->>'shop_name')::text AS shop_name,
+        (elem->>'lang_iso')::text AS lang_iso,
+        NULLIF((elem->>'name')::text, '') AS name,
+        COALESCE((elem->>'enabled')::boolean, TRUE) AS enabled,
+        NOW(), NOW()
+      FROM mod_automation_suite_config c
+      JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(c.value)='array' THEN c.value ELSE '[]'::jsonb END) AS elem ON TRUE
+      WHERE c.key = 'chatbots'
+      ON CONFLICT (id_bot) DO NOTHING;
+    $SQL$, org_expr);
 
     -- Insert welcome messages
-    INSERT INTO mod_automation_suite_welcome_messages (id, org_id, title, content, enabled, created_at, updated_at)
-    SELECT DISTINCT
-      (elem->>'id')::text AS id,
-      c.org_id,
-      NULLIF((elem->>'title')::text, '') AS title,
-      (elem->>'content')::text AS content,
-      COALESCE((elem->>'enabled')::boolean, TRUE) AS enabled,
-      NOW(), NOW()
-    FROM mod_automation_suite_config c
-    JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(c.value)='array' THEN c.value ELSE '[]'::jsonb END) AS elem ON TRUE
-    WHERE c.key = 'welcome_messages'
-    ON CONFLICT (id) DO NOTHING;
+    EXECUTE format($SQL$
+      INSERT INTO mod_automation_suite_welcome_messages (id, org_id, title, content, enabled, created_at, updated_at)
+      SELECT DISTINCT
+        (elem->>'id')::text AS id,
+        %s AS org_id,
+        NULLIF((elem->>'title')::text, '') AS title,
+        (elem->>'content')::text AS content,
+        COALESCE((elem->>'enabled')::boolean, TRUE) AS enabled,
+        NOW(), NOW()
+      FROM mod_automation_suite_config c
+      JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(c.value)='array' THEN c.value ELSE '[]'::jsonb END) AS elem ON TRUE
+      WHERE c.key = 'welcome_messages'
+      ON CONFLICT (id) DO NOTHING;
+    $SQL$, org_expr);
 
     -- Insert hub selections
-    INSERT INTO mod_automation_suite_hub_selection (org_id, id_bot, created_at)
-    SELECT DISTINCT c.org_id, x AS id_bot, NOW()
-      FROM mod_automation_suite_config c,
-           LATERAL jsonb_array_elements_text(COALESCE(c.value->'ids', '[]'::jsonb)) AS x
-     WHERE c.key = 'conversation_hub'
-    ON CONFLICT DO NOTHING;
+    EXECUTE format($SQL$
+      INSERT INTO mod_automation_suite_hub_selection (org_id, id_bot, created_at)
+      SELECT DISTINCT %s AS org_id, x AS id_bot, NOW()
+        FROM mod_automation_suite_config c,
+             LATERAL jsonb_array_elements_text(COALESCE(c.value->'ids', '[]'::jsonb)) AS x
+       WHERE c.key = 'conversation_hub'
+      ON CONFLICT DO NOTHING;
+    $SQL$, org_expr);
   END IF;
 END $$;

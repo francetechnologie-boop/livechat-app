@@ -36,12 +36,13 @@ DO $$ BEGIN
   END IF;
 END $$;
 
--- FK to suppliers
+-- FK to suppliers (guarded: skip when suppliers table missing)
 DO $$ BEGIN
-  BEGIN
-    ALTER TABLE public.mod_bom_supplier_contacts
-      ADD CONSTRAINT fk_bom_supplier_contacts_supplier
-      FOREIGN KEY (supplier_id) REFERENCES public.mod_bom_suppliers(id) ON DELETE CASCADE;
-  EXCEPTION WHEN duplicate_object THEN NULL; WHEN others THEN NULL; END;
+  IF to_regclass('public.mod_bom_suppliers') IS NOT NULL THEN
+    BEGIN
+      ALTER TABLE public.mod_bom_supplier_contacts
+        ADD CONSTRAINT fk_bom_supplier_contacts_supplier
+        FOREIGN KEY (supplier_id) REFERENCES public.mod_bom_suppliers(id) ON DELETE CASCADE;
+    EXCEPTION WHEN duplicate_object THEN NULL; WHEN others THEN NULL; END;
+  END IF;
 END $$;
-

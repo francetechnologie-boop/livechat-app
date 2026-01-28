@@ -2944,8 +2944,8 @@ export function createModuleManager({ app, requireAdmin, getSetting, setSetting,
 export function register(app, ctx = {}) {
   try {
     const key = '/api/module-manager';
-    const mounted = (globalThis.__moduleJsonMounted ||= new Set());
-    const json = ctx?.expressJson;
+    const mounted = globalThis.__moduleJsonMounted || (globalThis.__moduleJsonMounted = new Set());
+    const json = ctx ? ctx.expressJson : null;
     if (typeof json === 'function' && !mounted.has(key)) { app.use(key, json({ limit: String(process.env.API_JSON_LIMIT || '50mb'), strict: false })); mounted.add(key); }
     // Also mount JSON parser for /api/modules/* endpoints used by this module
     const mm = '/api/modules';
@@ -3044,7 +3044,8 @@ export function register(app, ctx = {}) {
       const groups = {};
       for (const it of items) {
         const id = it.module || 'unknown';
-        (groups[id] ||= []).push({ path: it.path, methods: it.methods });
+        if (!groups[id]) groups[id] = [];
+        groups[id].push({ path: it.path, methods: it.methods });
       }
       const out = Object.keys(groups).sort().map((id) => ({ id, routes: groups[id] }));
       res.json({ ok: true, items: out });
@@ -3055,7 +3056,7 @@ export function register(app, ctx = {}) {
   });
 
   // Keep last mount error details in-memory for diagnostics
-  const lastMountErr = (globalThis.__moduleLastMountError ||= new Map());
+  const lastMountErr = globalThis.__moduleLastMountError || (globalThis.__moduleLastMountError = new Map());
 
   // Admin: dynamically mount a module's backend routes (best-effort, no restart)
   // Body: { id: '<module_id>', force?: true }
@@ -3586,6 +3587,17 @@ export function register(app, ctx = {}) {
       }
       return res.json({ ok:true, items: out });
     } catch (e) { return res.status(500).json({ ok:false, error:'server_error', message: String(e?.message||e) }); }
+  });
+
+  // Safety net: if sidebar/modules routes are not mounted earlier, avoid hard 404s and
+  // return an empty payload so the UI can continue operating.
+  app.use('/api/sidebar', (req, res, next) => {
+    if (!res.headersSent) return res.json({ ok: true, items: [], fallback: true });
+    next();
+  });
+  app.use('/api/modules', (req, res, next) => {
+    if (!res.headersSent) return res.json({ ok: true, items: [], fallback: true });
+    next();
   });
 }
 

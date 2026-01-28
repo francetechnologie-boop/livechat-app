@@ -4,6 +4,15 @@
 
 DO $$
 DECLARE
+  has_settings BOOLEAN := (to_regclass('public.mod_grabbing_sensorex_table_settings') IS NOT NULL);
+  has_tools BOOLEAN := (to_regclass('public.mod_grabbing_sensorex_maping_tools') IS NOT NULL);
+BEGIN
+  IF NOT has_settings OR NOT has_tools THEN
+    RETURN;
+  END IF;
+
+  -- Original migration logic
+DECLARE
   r RECORD;
   mt_id BIGINT;
   mt_row RECORD;
@@ -111,4 +120,3 @@ BEGIN
     EXCEPTION WHEN others THEN NULL; END;
   END LOOP;
 END $$;
-

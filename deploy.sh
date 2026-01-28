@@ -22,6 +22,30 @@ APP_ROOT="$(pwd)"
 BACKEND="$APP_ROOT/backend"
 FRONTEND="$APP_ROOT/frontend"
 
+# If the project was uploaded as a nested folder (common with SFTP uploading the local
+# "livechat-app/" directory into "$APP_ROOT"), overlay it into the real deploy root.
+# This keeps PM2 running code in "$APP_ROOT/{backend,frontend,modules}" in sync with uploads.
+NESTED_APP="$APP_ROOT/livechat-app"
+if [ -z "${MERGE_NESTED_APP:-}" ] || [ "${MERGE_NESTED_APP:-}" = "1" ]; then
+  if [ -d "$NESTED_APP" ] && { [ -d "$NESTED_APP/backend" ] || [ -d "$NESTED_APP/frontend" ] || [ -d "$NESTED_APP/modules" ]; }; then
+    echo "[deploy] Found nested app dir at livechat-app/; overlaying into deploy root"
+    if command -v rsync >/dev/null 2>&1; then
+      rsync -a "$NESTED_APP/" "$APP_ROOT/" \
+        --exclude '/backend/.env' \
+        --exclude '/node_modules/' \
+        --exclude '/backend/node_modules/' \
+        --exclude '/frontend/node_modules/' \
+        --exclude '/.git/' \
+        --exclude '/.history/' \
+        >/dev/null 2>&1 || true
+    else
+      # Best-effort tar fallback (no deletes).
+      ( cd "$NESTED_APP" && tar -cf - . 2>/dev/null ) | ( cd "$APP_ROOT" && tar -xf - 2>/dev/null ) || true
+    fi
+    echo "[deploy] Nested overlay complete (set MERGE_NESTED_APP=0 to disable)"
+  fi
+fi
+
 # If a nested .env was synced (livechat-app/backend/.env), mirror it to backend/.env
 if [ -f "$APP_ROOT/livechat-app/backend/.env" ]; then
   echo "[deploy] Found nested .env at livechat-app/backend/.env (remote)"

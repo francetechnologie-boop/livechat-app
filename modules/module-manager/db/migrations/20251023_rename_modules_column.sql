@@ -12,5 +12,15 @@ DO $$ BEGIN
   END IF;
 END $$;
 
-ALTER TABLE mod_module_manager_modules
-  ADD CONSTRAINT IF NOT EXISTS uq_mod_mm_modules_name UNIQUE (module_name);
+-- Guarded unique constraint (PostgreSQL does not support ADD CONSTRAINT IF NOT EXISTS)
+DO $$ BEGIN
+  IF to_regclass('public.mod_module_manager_modules') IS NOT NULL THEN
+    BEGIN
+      ALTER TABLE mod_module_manager_modules
+        ADD CONSTRAINT uq_mod_mm_modules_name UNIQUE (module_name);
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+      WHEN others THEN NULL;
+    END;
+  END IF;
+END $$;

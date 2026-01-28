@@ -38,7 +38,9 @@ async function loadDotenv() {
     const dotenvPath = path.join(appBackendDir, "node_modules", "dotenv", "lib", "main.js");
     if (fs.existsSync(dotenvPath)) {
       const dotenv = await import(pathToFileURL(dotenvPath).href);
-      dotenv.config?.({ path: path.join(appBackendDir, ".env") });
+      if (typeof dotenv.config === "function") {
+        dotenv.config({ path: path.join(appBackendDir, ".env") });
+      }
     }
   } catch {}
 }
@@ -113,7 +115,7 @@ async function applyMigrations(pool) {
       await client.query("COMMIT");
     } catch (e) {
       try { await client.query("ROLLBACK"); } catch {}
-      const msg = e?.message || String(e);
+      const msg = (e && e.message) ? e.message : String(e);
       console.error(`[installer] ${MODULE_NAME} migration failed: ${file}: ${msg}`);
       throw e;
     } finally {
@@ -123,7 +125,7 @@ async function applyMigrations(pool) {
 }
 
 export async function onModuleLoaded(ctx = {}) {
-  const pool = ctx?.pool;
+  const pool = ctx && ctx.pool ? ctx.pool : null;
   if (!pool) return;
   await applyMigrations(pool);
 }
@@ -141,5 +143,9 @@ export async function installModule() {
 }
 
 if (import.meta.url === pathToFileURL(__filename).href || (process.argv[1] && path.resolve(process.argv[1]) === __filename)) {
-  installModule().catch((err) => { console.error("Installer failed:", err?.message || err); process.exitCode = 1; });
+  installModule().catch((err) => {
+    const message = (err && err.message) ? err.message : err;
+    console.error("Installer failed:", message);
+    process.exitCode = 1;
+  });
 }
