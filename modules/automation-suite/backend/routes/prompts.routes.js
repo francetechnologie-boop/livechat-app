@@ -117,6 +117,9 @@ async function openaiPromptList(query = {}, opts, ctx) {
 export function registerAutomationSuitePromptsRoutes(app, ctx = {}) {
   const requireAdmin = ctx?.requireAdmin;
   const pool = ctx?.pool;
+  const isDbUnavailable = (e) => {
+    try { return (e?.message || String(e)) === 'db_unavailable'; } catch { return false; }
+  };
 
   function sanitizeServerLabel(raw, fallback = 'mcp') {
     try {
@@ -301,7 +304,10 @@ export function registerAutomationSuitePromptsRoutes(app, ctx = {}) {
                     LIMIT $2`;
       const r = await pool.query(sql, [Number.isFinite(org)? org: null, limit]);
       return res.json({ ok:true, items: r.rows || [] });
-    } catch (e) { return res.status(500).json({ ok:false, error:'server_error' }); }
+    } catch (e) {
+      if (isDbUnavailable(e)) return res.status(503).json({ ok:false, error:'db_unavailable' });
+      return res.status(500).json({ ok:false, error:'server_error' });
+    }
   });
 
   app.get('/api/automation-suite/prompt-configs/:id', async (req, res) => {
@@ -313,7 +319,10 @@ export function registerAutomationSuitePromptsRoutes(app, ctx = {}) {
       const r = await pool.query(`SELECT * FROM mod_automation_suite_prompt_config WHERE id=$1 LIMIT 1`, [id]);
       if (!r.rowCount) return res.status(404).json({ ok:false, error:'not_found' });
       return res.json({ ok:true, item: r.rows[0] });
-    } catch { return res.status(500).json({ ok:false, error:'server_error' }); }
+    } catch (e) {
+      if (isDbUnavailable(e)) return res.status(503).json({ ok:false, error:'db_unavailable' });
+      return res.status(500).json({ ok:false, error:'server_error' });
+    }
   });
 
   // Create a new prompt_config row (module DB)
@@ -332,7 +341,10 @@ export function registerAutomationSuitePromptsRoutes(app, ctx = {}) {
       );
       const r = await pool.query(`SELECT * FROM mod_automation_suite_prompt_config WHERE id=$1 LIMIT 1`, [id]);
       return res.status(201).json({ ok:true, item: r.rowCount ? r.rows[0] : { id, name } });
-    } catch (e) { return res.status(500).json({ ok:false, error:'server_error' }); }
+    } catch (e) {
+      if (isDbUnavailable(e)) return res.status(503).json({ ok:false, error:'db_unavailable' });
+      return res.status(500).json({ ok:false, error:'server_error' });
+    }
   });
 
   // Patch an existing prompt_config row (module DB)
@@ -379,6 +391,7 @@ export function registerAutomationSuitePromptsRoutes(app, ctx = {}) {
       return res.json({ ok:true, item: r.rowCount ? r.rows[0] : null });
     } catch (e) {
       try { ctx?.logToFile?.(`[automation-suite] save error for prompt_config ${String(req.params?.id||'')} -> ${e?.message || e}`); } catch {}
+      if (isDbUnavailable(e)) return res.status(503).json({ ok:false, error:'db_unavailable' });
       return res.status(500).json({ ok:false, error:'server_error' });
     }
   });
@@ -540,7 +553,10 @@ export function registerAutomationSuitePromptsRoutes(app, ctx = {}) {
       await pool.query(`UPDATE mod_automation_suite_chatbots SET prompt_config_id=NULL, updated_at=NOW() WHERE prompt_config_id=$1`, [id]);
       const r = await pool.query(`DELETE FROM mod_automation_suite_prompt_config WHERE id=$1`, [id]);
       return res.json({ ok:true, deleted: r.rowCount|0 });
-    } catch { return res.status(500).json({ ok:false, error:'server_error' }); }
+    } catch (e) {
+      if (isDbUnavailable(e)) return res.status(503).json({ ok:false, error:'db_unavailable' });
+      return res.status(500).json({ ok:false, error:'server_error' });
+    }
   });
 
   // ----- MCP2 server linking for a prompt_config -----

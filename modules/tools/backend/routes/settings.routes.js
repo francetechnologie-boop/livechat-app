@@ -36,6 +36,10 @@ export function registerToolsSettingsRoutes(app, ctx = {}) {
   const pool = ctx.pool;
   const logToFile = typeof ctx.logToFile === 'function' ? ctx.logToFile : () => {};
   const requireAdmin = requireAdminGuard(ctx);
+  const isDbUnavailable = (e) => {
+    const msg = e?.message || String(e);
+    return msg === 'db_unavailable' || msg === 'db_schema_unavailable';
+  };
 
   app.get('/api/tools/settings/mysql-profile', async (req, res) => {
     if (!pool) {
@@ -53,6 +57,7 @@ export function registerToolsSettingsRoutes(app, ctx = {}) {
       });
     } catch (error) {
       logToFile?.(`[tools] mysql profile status failed: ${error?.message || error}`);
+      if (isDbUnavailable(error)) return res.status(503).json({ ok:false, error:'db_unavailable' });
       return res.status(500).json({ ok: false, error: 'mysql_profile_failed', message: 'Unable to read MySQL profile setting.' });
     }
   });
@@ -76,6 +81,7 @@ export function registerToolsSettingsRoutes(app, ctx = {}) {
       return res.json({ ok: true, profile_id: profileId, org_id: orgId ?? null });
     } catch (error) {
       logToFile?.(`[tools] mysql profile save failed: ${error?.message || error}`);
+      if (isDbUnavailable(error)) return res.status(503).json({ ok:false, error:'db_unavailable' });
       return res.status(500).json({ ok: false, error: 'mysql_profile_failed', message: 'Unable to save MySQL profile setting.' });
     }
   });

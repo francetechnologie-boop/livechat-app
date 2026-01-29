@@ -50,18 +50,56 @@ async function getPgPool() {
 async function applyMigrations(pool, migrationsPath, moduleName) {
   if (!fs.existsSync(migrationsPath)) return;
   const files = fs.readdirSync(migrationsPath).filter(f => f.endsWith('.sql')).sort();
+  const extractUpSql = (sqlText) => {
+    const sql = String(sqlText || '');
+    const upIdx = sql.search(/^\s*--\s*up\b/im);
+    const downIdx = sql.search(/^\s*--\s*down\b/im);
+    if (upIdx >= 0 && downIdx > upIdx) return sql.slice(upIdx, downIdx);
+    if (upIdx >= 0 && downIdx < 0) return sql.slice(upIdx);
+    return sql;
+  };
   for (const file of files) {
-    const seen = await pool.query(`SELECT 1 FROM migrations_log WHERE module_name=$1 AND filename=$2;`, [moduleName, file]).catch(()=>({rows:[]}));
-    if (seen.rows?.length) continue;
-    const sql = fs.readFileSync(path.join(migrationsPath, file), 'utf8');
+    const seen = await pool.query(
+      `SELECT 1 FROM migrations_log WHERE module_name=$1 AND filename=$2;`,
+      [moduleName, file]
+    ).catch(() => ({ rows: [] }));
+    if (seen.rows && seen.rows.length) continue;
+    const rawSql = fs.readFileSync(path.join(migrationsPath, file), 'utf8');
+    const sql = extractUpSql(rawSql);
     const c = await pool.connect();
     try {
       await c.query('BEGIN');
       await c.query(sql);
-      await c.query(`INSERT INTO migrations_log (module_name, filename) VALUES ($1, $2);`, [moduleName, file]);
+      await c.query(
+        `INSERT INTO migrations_log (module_name, filename) VALUES ($1, $2) ON CONFLICT DO NOTHING;`,
+        [moduleName, file]
+      );
       await c.query('COMMIT');
     } catch (e) {
       try { await c.query('ROLLBACK'); } catch {}
+      try {
+        const dbg = String(process.env.MIGRATION_DEBUG || '1') !== '0';
+        const pos = Number(e && e.position ? e.position : 0) || 0;
+        let snippet = '';
+        let pointer = '';
+        if (pos > 0) {
+          const start = Math.max(0, pos - 160);
+          const end = Math.min(sql.length, pos + 160);
+          snippet = sql.slice(start, end);
+          const caretIdx = Math.max(0, pos - start - 1);
+          pointer = ' '.repeat(Math.max(0, caretIdx)) + '^';
+        } else {
+          snippet = sql.slice(0, 320);
+        }
+        console.error(`[installer] ${moduleName} migration failed: ${file}`);
+        console.error(`error: ${e && e.message ? e.message : String(e)}${pos ? ` (position ${pos})` : ''}`);
+        if (dbg) {
+          console.error('--- SQL snippet ---');
+          console.error(snippet);
+          if (pointer) console.error(pointer);
+          console.error('-------------------');
+        }
+      } catch {}
       throw e;
     } finally { c.release(); }
   }
@@ -101,11 +139,10 @@ export async function installModule() {
   await pool.query(`INSERT INTO modules(name, version, active, install, installed_at, updated_at)
                     VALUES ($1,$2,1,1,NOW(),NOW())
                     ON CONFLICT (name) DO UPDATE SET version=$2, active=1, install=1, updated_at=NOW();`, [name, version]);
-  await applyMigrations(pool, migrationsDir, name).catch(()=>{});
+  await applyMigrations(pool, migrationsDir, name);
   await pool.end().catch(()=>{});
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
   installModule().catch((e)=>{ console.error(e?.stack||e); process.exit(1); });
 }
-

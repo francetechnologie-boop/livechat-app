@@ -2,6 +2,11 @@ import { deleteSession, getSessionMessages, listSessions, pickOrgId } from '../s
 
 export function registerCompanyChatSessionsRoutes(app, ctx = {}) {
   const pool = ctx.pool;
+  const sendErr = (res, e) => {
+    const msg = e?.message || String(e);
+    if (msg === 'db_unavailable') return res.status(503).json({ ok: false, error: 'db_unavailable' });
+    return res.status(500).json({ ok: false, error: 'server_error', message: msg });
+  };
 
   app.get('/api/company-chat/sessions', async (req, res) => {
     try {
@@ -11,7 +16,7 @@ export function registerCompanyChatSessionsRoutes(app, ctx = {}) {
       const sessions = await listSessions(pool, orgId, { tabId, limit });
       res.json({ ok: true, sessions });
     } catch (e) {
-      res.status(500).json({ ok: false, error: 'server_error', message: e?.message || String(e) });
+      return sendErr(res, e);
     }
   });
 
@@ -23,7 +28,7 @@ export function registerCompanyChatSessionsRoutes(app, ctx = {}) {
       const messages = await getSessionMessages(pool, orgId, id);
       res.json({ ok: true, messages });
     } catch (e) {
-      res.status(500).json({ ok: false, error: 'server_error', message: e?.message || String(e) });
+      return sendErr(res, e);
     }
   });
 
@@ -35,8 +40,7 @@ export function registerCompanyChatSessionsRoutes(app, ctx = {}) {
       const deleted = await deleteSession(pool, orgId, id);
       res.json({ ok: true, deleted });
     } catch (e) {
-      res.status(500).json({ ok: false, error: 'server_error', message: e?.message || String(e) });
+      return sendErr(res, e);
     }
   });
 }
-

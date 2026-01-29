@@ -15,6 +15,11 @@ function redactSecret(v) {
 export function registerCompanyChatConfigRoutes(app, ctx = {}) {
   const pool = ctx.pool;
   const requireAdmin = requireAdminGuard(ctx);
+  const sendErr = (res, e) => {
+    const msg = e?.message || String(e);
+    if (msg === 'db_unavailable') return res.status(503).json({ ok: false, error: 'db_unavailable' });
+    return res.status(500).json({ ok: false, error: 'server_error', message: msg });
+  };
 
   app.get('/api/company-chat/config', async (req, res) => {
     try {
@@ -37,7 +42,7 @@ export function registerCompanyChatConfigRoutes(app, ctx = {}) {
         prestashop: { base: typeof prestaBase === 'string' ? prestaBase : '', api_key: redactSecret(prestaKey) },
       });
     } catch (e) {
-      res.status(500).json({ ok: false, error: 'server_error', message: e?.message || String(e) });
+      return sendErr(res, e);
     }
   });
 
@@ -61,7 +66,7 @@ export function registerCompanyChatConfigRoutes(app, ctx = {}) {
       }
       res.json({ ok: true });
     } catch (e) {
-      res.status(500).json({ ok: false, error: 'server_error', message: e?.message || String(e) });
+      return sendErr(res, e);
     }
   });
 }

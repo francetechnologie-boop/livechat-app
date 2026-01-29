@@ -62,7 +62,8 @@ BEGIN
       SELECT (data_type IN ('text','character varying'))
       INTO org_col_is_text
       FROM information_schema.columns
-      WHERE table_name='mod_automation_suite_config' AND column_name='org_id'
+      WHERE table_schema = current_schema()
+        AND table_name='mod_automation_suite_config' AND column_name='org_id'
       LIMIT 1;
     END IF;
 
@@ -74,15 +75,26 @@ BEGIN
       EXECUTE 'ALTER TABLE mod_automation_suite_config ADD COLUMN org_id_int INT';
     END IF;
 
-    -- Fill conversion safely: digits -> int, default aliases -> default org, others stay NULL
+    -- Fill conversion safely: digits -> int (only when it fits), everything else -> default org.
     EXECUTE 'UPDATE mod_automation_suite_config SET org_id_int = NULL';
 
     IF org_col_is_text THEN
-      -- Normalize org_id to digits only; blank -> NULL
-      EXECUTE 'UPDATE mod_automation_suite_config SET org_id = NULLIF(regexp_replace(org_id::text, ''[^0-9]'','''',''g''), '''')';
-
-      -- Best-effort numeric conversion after normalization
-      EXECUTE 'UPDATE mod_automation_suite_config SET org_id_int = org_id::INT WHERE org_id ~ ''^[0-9]+$''';
+      -- Best-effort numeric conversion. We only cast when it fits into INT to avoid runtime failures.
+      EXECUTE $SQL$
+        UPDATE mod_automation_suite_config
+           SET org_id_int = CASE
+             WHEN org_id IS NULL THEN NULL
+             WHEN (org_id::text ~ '^[0-9]+$')
+                  AND length(org_id::text) <= 10
+                  AND (org_id::text)::bigint BETWEEN 1 AND 2147483647
+               THEN (org_id::text)::int
+             WHEN (regexp_replace(org_id::text, '[^0-9]', '', 'g') ~ '^[0-9]+$')
+                  AND length(regexp_replace(org_id::text, '[^0-9]', '', 'g')) <= 10
+                  AND (regexp_replace(org_id::text, '[^0-9]', '', 'g'))::bigint BETWEEN 1 AND 2147483647
+               THEN (regexp_replace(org_id::text, '[^0-9]', '', 'g'))::int
+             ELSE NULL
+           END
+      $SQL$;
 
       -- Default aliases / empty / non-digits → default org
       EXECUTE format(
@@ -90,8 +102,10 @@ BEGIN
         default_id
       );
     ELSE
-      -- If already INT, keep existing values
-      NULL;
+      -- If already INT, keep existing values.
+      BEGIN
+        EXECUTE 'UPDATE mod_automation_suite_config SET org_id_int = org_id';
+      EXCEPTION WHEN others THEN NULL; END;
     END IF;
 
     -- Guard: if org_id_int references a non-existing org, map to default

@@ -8,6 +8,11 @@ function requireAdminGuard(ctx) {
 export function registerCompanyChatTabsRoutes(app, ctx = {}) {
   const pool = ctx.pool;
   const requireAdmin = requireAdminGuard(ctx);
+  const sendErr = (res, e) => {
+    const msg = e?.message || String(e);
+    if (msg === 'db_unavailable') return res.status(503).json({ ok: false, error: 'db_unavailable' });
+    return res.status(500).json({ ok: false, error: 'server_error', message: msg });
+  };
 
   app.get('/api/company-chat/tabs', async (req, res) => {
     try {
@@ -16,7 +21,7 @@ export function registerCompanyChatTabsRoutes(app, ctx = {}) {
       const tabs = await listTabs(pool, orgId, { includeDisabled });
       res.json({ ok: true, tabs });
     } catch (e) {
-      res.status(500).json({ ok: false, error: 'server_error', message: e?.message || String(e) });
+      return sendErr(res, e);
     }
   });
 
@@ -33,7 +38,7 @@ export function registerCompanyChatTabsRoutes(app, ctx = {}) {
       });
       res.json({ ok: true, id });
     } catch (e) {
-      res.status(500).json({ ok: false, error: 'server_error', message: e?.message || String(e) });
+      return sendErr(res, e);
     }
   });
 
@@ -46,7 +51,7 @@ export function registerCompanyChatTabsRoutes(app, ctx = {}) {
       await updateTab(pool, orgId, id, req.body || {});
       res.json({ ok: true });
     } catch (e) {
-      res.status(500).json({ ok: false, error: 'server_error', message: e?.message || String(e) });
+      return sendErr(res, e);
     }
   });
 
@@ -59,8 +64,7 @@ export function registerCompanyChatTabsRoutes(app, ctx = {}) {
       const deleted = await deleteTab(pool, orgId, id);
       res.json({ ok: true, deleted });
     } catch (e) {
-      res.status(500).json({ ok: false, error: 'server_error', message: e?.message || String(e) });
+      return sendErr(res, e);
     }
   });
 }
-

@@ -2,7 +2,8 @@
 -- Approach: create a new table with desired column order, copy data, swap names, recreate indexes.
 -- Idempotent: skips when an old-swapped table exists.
 
-DO $$
+-- IMPORTANT: avoid nested dollar-quoting inside a DO body (syntax error).
+DO $do$
 DECLARE
   has_old boolean := (to_regclass('public.mod_grabbing_zasilkovna_old') IS NOT NULL);
   has_tbl boolean := (to_regclass('public.mod_grabbing_zasilkovna') IS NOT NULL);
@@ -19,7 +20,7 @@ BEGIN
   END IF;
 
   -- Create new table in desired column order (CSV-aligned first), then legacy columns, timestamps, org
-  EXECUTE $$
+  EXECUTE $sql$
     CREATE TABLE public.mod_grabbing_zasilkovna_new (
       label_format               text,
       submission_number          text NOT NULL,
@@ -59,10 +60,10 @@ BEGIN
       updated_at                 timestamp DEFAULT now(),
       org_id                     text
     )
-  $$;
+  $sql$;
 
   -- Copy data with sensible fallbacks
-  EXECUTE $$
+  EXECUTE $sql$
     INSERT INTO public.mod_grabbing_zasilkovna_new (
       label_format, submission_number, label_printed, label_date, order_raw, barcode,
       recipient_name, recipient_surname, pickup_point_or_carrier, sender, cod, currency,
@@ -107,7 +108,7 @@ BEGIN
       updated_at,
       org_id
     FROM public.mod_grabbing_zasilkovna
-  $$;
+  $sql$;
 
   -- Swap names
   EXECUTE 'ALTER TABLE public.mod_grabbing_zasilkovna RENAME TO mod_grabbing_zasilkovna_old';
@@ -128,5 +129,4 @@ BEGIN
 
   -- Optional: drop the old table after successful swap (comment out to keep a safety copy)
   -- EXECUTE 'DROP TABLE public.mod_grabbing_zasilkovna_old';
-END $$;
-
+END $do$;

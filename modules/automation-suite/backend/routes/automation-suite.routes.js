@@ -4,6 +4,9 @@ import { recordPromptConfigHistory } from '../../../../backend/lib/promptConfigH
 export function registerAutomationSuiteRoutes(app, ctx = {}) {
   const pool = ctx?.pool;
   const chatLog = typeof ctx?.chatLog === 'function' ? ctx.chatLog : null;
+  const isDbUnavailable = (e) => {
+    try { return (e?.message || String(e)) === 'db_unavailable'; } catch { return false; }
+  };
 
   function toNullableInt(v) {
     if (v == null) return null;
@@ -248,7 +251,10 @@ export function registerAutomationSuiteRoutes(app, ctx = {}) {
         r = await pool.query(base + order);
       }
       return res.json(r.rows || []);
-    } catch (e) { return res.status(500).json([]); }
+    } catch (e) {
+      if (isDbUnavailable(e)) return res.status(503).json([]);
+      return res.status(500).json([]);
+    }
   });
   app.post('/api/automation-suite/chatbots', async (req, res) => {
     try {

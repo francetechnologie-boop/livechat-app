@@ -168,11 +168,21 @@ export default function App() {
     const check = async () => {
       try {
         const r = await fetch('/api/health/db', { credentials: 'include', cache: 'no-store' });
-        if (!r.ok) throw new Error('db_unavailable');
         const j = await r.json().catch(()=>({}));
+        if (!r.ok) {
+          const le = j?.last_error;
+          const detail = le ? `${le.code ? `${le.code}: ` : ''}${String(le.message || '').trim()}`.trim() : '';
+          throw new Error(detail || 'db_unavailable');
+        }
         const ok = !!(j && j.ok && j.db);
         if (!cancelled) setDbUnavailable(!ok);
-        if (!ok) { try { pushDebugError({ source: 'db_health', error: 'Database unavailable' }); } catch {} }
+        if (!ok) {
+          try {
+            const le = j?.last_error;
+            const detail = le ? `${le.code ? `${le.code}: ` : ''}${String(le.message || '').trim()}`.trim() : '';
+            pushDebugError({ source: 'db_health', error: detail ? `Database unavailable: ${detail}` : 'Database unavailable' });
+          } catch {}
+        }
       } catch (e) {
         if (!cancelled) setDbUnavailable(true);
         try { pushDebugError({ source: 'db_health', error: 'Database unavailable', stack: String(e?.message||e) }); } catch {}

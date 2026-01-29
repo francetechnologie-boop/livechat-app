@@ -361,7 +361,95 @@ export function registerGatewayRoutes(app, ctx = {}) {
         END $$;
       `);
     } catch {}
-    smsTableReady = true;
+    try {
+      const r = await pool.query(`SELECT to_regclass('public.mod_gateway_sms_messages') AS reg`);
+      smsTableReady = !!(r && r.rows && r.rows[0] && r.rows[0].reg);
+    } catch {
+      smsTableReady = false;
+    }
+  }
+
+  // Lines storage (DB) helpers (idempotent)
+  let linesTableReady = false;
+  async function ensureLinesTable() {
+    if (!pool || linesTableReady) return;
+    try {
+      await pool.query(
+        `CREATE TABLE IF NOT EXISTS public.mod_gateway_lines (
+           id BIGSERIAL PRIMARY KEY,
+           org_id INTEGER NULL,
+           device_id TEXT NULL,
+           subscription_id INTEGER NULL,
+           sim_slot INTEGER NULL,
+           carrier TEXT NULL,
+           display_name TEXT NULL,
+           msisdn TEXT NULL,
+           last_seen TIMESTAMP NULL,
+           created_at TIMESTAMP DEFAULT NOW(),
+           updated_at TIMESTAMP DEFAULT NOW()
+         )`
+      );
+      // Best-effort upgrades
+      try { await pool.query(`ALTER TABLE public.mod_gateway_lines ADD COLUMN IF NOT EXISTS org_id INTEGER NULL`); } catch {}
+      try { await pool.query(`ALTER TABLE public.mod_gateway_lines ADD COLUMN IF NOT EXISTS device_id TEXT NULL`); } catch {}
+      try { await pool.query(`ALTER TABLE public.mod_gateway_lines ADD COLUMN IF NOT EXISTS subscription_id INTEGER NULL`); } catch {}
+      try { await pool.query(`ALTER TABLE public.mod_gateway_lines ADD COLUMN IF NOT EXISTS sim_slot INTEGER NULL`); } catch {}
+      try { await pool.query(`ALTER TABLE public.mod_gateway_lines ADD COLUMN IF NOT EXISTS carrier TEXT NULL`); } catch {}
+      try { await pool.query(`ALTER TABLE public.mod_gateway_lines ADD COLUMN IF NOT EXISTS display_name TEXT NULL`); } catch {}
+      try { await pool.query(`ALTER TABLE public.mod_gateway_lines ADD COLUMN IF NOT EXISTS msisdn TEXT NULL`); } catch {}
+      try { await pool.query(`ALTER TABLE public.mod_gateway_lines ADD COLUMN IF NOT EXISTS last_seen TIMESTAMP NULL`); } catch {}
+      try { await pool.query(`ALTER TABLE public.mod_gateway_lines ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()`); } catch {}
+      try { await pool.query(`ALTER TABLE public.mod_gateway_lines ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`); } catch {}
+
+      // Deduplicate before enforcing uniqueness (keeps latest id per subscription_id).
+      try {
+        await pool.query(
+          `DELETE FROM public.mod_gateway_lines a
+            USING public.mod_gateway_lines b
+           WHERE a.subscription_id IS NOT NULL
+             AND b.subscription_id IS NOT NULL
+             AND a.subscription_id = b.subscription_id
+             AND a.id < b.id`
+        );
+      } catch {}
+
+      try { await pool.query(`CREATE INDEX IF NOT EXISTS idx_mod_gateway_lines_last_seen ON public.mod_gateway_lines (last_seen DESC)`); } catch {}
+      try { await pool.query(`CREATE INDEX IF NOT EXISTS idx_mod_gateway_lines_msisdn ON public.mod_gateway_lines (msisdn)`); } catch {}
+      try { await pool.query(`CREATE INDEX IF NOT EXISTS idx_mod_gateway_lines_org ON public.mod_gateway_lines (org_id)`); } catch {}
+      try { await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_mod_gateway_lines_sub ON public.mod_gateway_lines (subscription_id)`); } catch {}
+    } catch {}
+
+    // Guarded FK to organizations(id)
+    try {
+      await pool.query(`
+        DO $$ BEGIN
+          IF to_regclass('public.organizations') IS NOT NULL AND EXISTS (
+            SELECT 1
+              FROM pg_index i
+              JOIN pg_class t ON t.oid = i.indrelid
+              JOIN pg_namespace n ON n.oid = t.relnamespace
+              JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (i.indkey)
+             WHERE n.nspname = 'public' AND t.relname = 'organizations'
+               AND i.indisunique = TRUE
+               AND array_length(i.indkey,1) = 1
+               AND a.attname = 'id'
+          ) THEN
+            BEGIN
+              ALTER TABLE public.mod_gateway_lines
+                ADD CONSTRAINT fk_mod_gateway_lines_org
+                FOREIGN KEY (org_id) REFERENCES public.organizations(id) ON DELETE SET NULL;
+            EXCEPTION WHEN duplicate_object THEN NULL; WHEN others THEN NULL; END;
+          END IF;
+        END $$;
+      `);
+    } catch {}
+
+    try {
+      const r = await pool.query(`SELECT to_regclass('public.mod_gateway_lines') AS reg`);
+      linesTableReady = !!(r && r.rows && r.rows[0] && r.rows[0].reg);
+    } catch {
+      linesTableReady = false;
+    }
   }
 
   let smsStatusReady = false;
@@ -541,6 +629,8 @@ export function registerGatewayRoutes(app, ctx = {}) {
   app.get('/api/gateway/lines', async (_req, res) => {
     try {
       if (!pool) return res.status(503).json({ ok:false, error:'db_unavailable' });
+      await ensureLinesTable();
+      if (!linesTableReady) return res.status(503).json({ ok:false, error:'db_schema_unavailable', table:'mod_gateway_lines' });
       const r = await pool.query(`SELECT id, org_id, device_id, subscription_id, sim_slot, carrier, display_name, msisdn, last_seen FROM mod_gateway_lines ORDER BY last_seen DESC NULLS LAST, subscription_id`);
       return res.json({ ok:true, items: r.rows || [] });
     } catch (e) { return res.status(500).json({ ok:false, error:'server_error', message: e?.message || String(e) }); }
@@ -551,6 +641,8 @@ export function registerGatewayRoutes(app, ctx = {}) {
     const u = requireAdmin(req, res); if (!u) return;
     try {
       if (!pool) return res.status(503).json({ ok:false, error:'db_unavailable' });
+      await ensureLinesTable();
+      if (!linesTableReady) return res.status(503).json({ ok:false, error:'db_schema_unavailable', table:'mod_gateway_lines' });
       const r = await pool.query(`SELECT id, org_id, device_id, subscription_id, sim_slot, carrier, display_name, msisdn, last_seen FROM mod_gateway_lines ORDER BY last_seen DESC NULLS LAST, subscription_id`);
       const defSub = await getSetting('SMS_DEFAULT_SUBSCRIPTION_ID').catch(()=>null);
       res.json({ ok:true, items: r.rows || [], default_subscription_id: defSub ? Number(defSub) : null });
@@ -561,6 +653,8 @@ export function registerGatewayRoutes(app, ctx = {}) {
     const u = requireAdmin(req, res); if (!u) return;
     try {
       if (!pool) return res.status(503).json({ ok:false, error:'db_unavailable' });
+      await ensureLinesTable();
+      if (!linesTableReady) return res.status(503).json({ ok:false, error:'db_schema_unavailable', table:'mod_gateway_lines' });
       const r = await pool.query(`SELECT id, org_id, device_id, subscription_id, sim_slot, carrier, display_name, msisdn, last_seen FROM mod_gateway_lines ORDER BY last_seen DESC NULLS LAST, subscription_id`);
       const defSub = await getSetting('SMS_DEFAULT_SUBSCRIPTION_ID').catch(()=>null);
       res.json({ ok:true, items: r.rows || [], default_subscription_id: defSub ? Number(defSub) : null });
@@ -596,6 +690,8 @@ export function registerGatewayRoutes(app, ctx = {}) {
       const msisdn = String(req.body?.msisdn || '').trim();
       if (!sub) return res.status(400).json({ ok:false, error:'bad_request' });
       if (!pool) return res.status(503).json({ ok:false, error:'db_unavailable' });
+      await ensureLinesTable();
+      if (!linesTableReady) return res.status(503).json({ ok:false, error:'db_schema_unavailable', table:'mod_gateway_lines' });
       await pool.query(
         `INSERT INTO mod_gateway_lines (subscription_id, msisdn, last_seen) VALUES ($1,$2,NOW())
          ON CONFLICT (subscription_id) DO UPDATE SET msisdn=EXCLUDED.msisdn, last_seen=NOW()`,
@@ -612,6 +708,8 @@ export function registerGatewayRoutes(app, ctx = {}) {
       const msisdn = String(req.body?.msisdn || '').trim();
       if (!sub) return res.status(400).json({ ok:false, error:'bad_request' });
       if (!pool) return res.status(503).json({ ok:false, error:'db_unavailable' });
+      await ensureLinesTable();
+      if (!linesTableReady) return res.status(503).json({ ok:false, error:'db_schema_unavailable', table:'mod_gateway_lines' });
       await pool.query(
         `INSERT INTO mod_gateway_lines (subscription_id, msisdn, last_seen) VALUES ($1,$2,NOW())
          ON CONFLICT (subscription_id) DO UPDATE SET msisdn=EXCLUDED.msisdn, last_seen=NOW()`,
@@ -1036,6 +1134,7 @@ export function registerGatewayRoutes(app, ctx = {}) {
     try {
       if (!pool) return res.status(503).json({ ok:false, error:'db_unavailable' });
       await ensureSmsMessagesTable();
+      if (!smsTableReady) return res.status(503).json({ ok:false, error:'db_schema_unavailable', table:'mod_gateway_sms_messages' });
 
       const limitRaw = Number(req.query?.limit || 200);
       const limit = Math.max(1, Math.min(500, Number.isFinite(limitRaw) ? limitRaw : 200));
@@ -1284,6 +1383,8 @@ export function registerGatewayRoutes(app, ctx = {}) {
     }
     try {
       if (!pool) return res.status(503).json({ ok:false, error:'db_unavailable' });
+      await ensureLinesTable();
+      if (!linesTableReady) return res.status(503).json({ ok:false, error:'db_schema_unavailable', table:'mod_gateway_lines' });
       const b = req.body || {};
       const deviceId = (typeof b.device_id === 'string' && b.device_id.trim()) || null;
       const lines = Array.isArray(b.lines) ? b.lines : [];

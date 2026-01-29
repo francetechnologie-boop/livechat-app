@@ -1,10 +1,11 @@
 -- Ensure mod_grabbing_zasilkovna schema exists even when earlier migrations ran out of order.
 
 -- 1) Base table with superset of expected columns
-DO $$
+DO $do$
 BEGIN
   IF to_regclass('public.mod_grabbing_zasilkovna') IS NULL THEN
-    EXECUTE $$
+    -- IMPORTANT: avoid nested dollar-quoting inside a DO body (syntax error).
+    EXECUTE $sql$
       CREATE TABLE public.mod_grabbing_zasilkovna (
         id SERIAL PRIMARY KEY,
         submission_number          text NULL,
@@ -46,9 +47,9 @@ BEGIN
         created_at                 timestamp DEFAULT now(),
         updated_at                 timestamp DEFAULT now()
       );
-    $$;
+    $sql$;
   END IF;
-END $$;
+END $do$;
 
 -- 2) Add any missing columns on existing installs
 DO $$

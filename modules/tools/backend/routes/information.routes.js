@@ -59,6 +59,10 @@ export function registerToolsInformationRoutes(app, ctx = {}) {
   const pool = ctx.pool;
   const logToFile = typeof ctx.logToFile === 'function' ? ctx.logToFile : () => {};
   const requireAdmin = requireAdminGuard(ctx);
+  const isDbUnavailable = (e) => {
+    const msg = e?.message || String(e);
+    return msg === 'db_unavailable' || msg === 'db_schema_unavailable';
+  };
 
   app.get('/api/tools/information/__ping', (_req, res) => res.json({ ok: true, module: 'tools', feature: 'information' }));
 
@@ -88,6 +92,7 @@ export function registerToolsInformationRoutes(app, ctx = {}) {
       });
     } catch (error) {
       logToFile?.(`[tools] information settings load failed: ${error?.message || error}`);
+      if (isDbUnavailable(error)) return res.status(503).json({ ok:false, error:'db_unavailable' });
       return res.status(500).json({ ok: false, error: 'information_settings_failed', message: 'Unable to load information settings.' });
     }
   });
@@ -137,6 +142,7 @@ export function registerToolsInformationRoutes(app, ctx = {}) {
         return res.status(413).json({ ok: false, error: 'text_too_large', message: error?.message || 'Text too large.' });
       }
       logToFile?.(`[tools] information settings save failed: ${error?.message || error}`);
+      if (isDbUnavailable(error)) return res.status(503).json({ ok:false, error:'db_unavailable' });
       return res.status(500).json({ ok: false, error: 'information_settings_failed', message: 'Unable to save information settings.' });
     }
   });

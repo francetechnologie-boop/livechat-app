@@ -141,7 +141,7 @@ EOF
 fi
 
 ### ---------- SINGLE RUN LOCK ----------
-# Prevent concurrent deploys; use exec + flock wrapper to avoid FD inheritance
+# Prevent concurrent deploys.
 LOCK_FILE="${LOCK_FILE:-/var/lock/livechat-deploy.lock}"
 if ! mkdir -p "$(dirname "$LOCK_FILE")" >/dev/null 2>&1; then
   LOCK_FILE="$APP_ROOT/.deploy.lock"
@@ -151,12 +151,38 @@ if [ -z "${DEPLOY_LOCKED:-}" ]; then
     echo "[deploy] SKIP_LOCK=1 — skipping deploy lock"
     exec env DEPLOY_LOCKED=1 bash "$0" "$@"
   fi
+  : > "$LOCK_FILE" 2>/dev/null || true
   echo "[deploy] Acquiring lock: $LOCK_FILE"
-  if [ -n "${DEPLOY_LOCK_WAIT:-}" ]; then
-    exec flock -w "${DEPLOY_LOCK_WAIT}" "$LOCK_FILE" env DEPLOY_LOCKED=1 bash "$0" "$@"
-  else
-    exec flock -n "$LOCK_FILE" env DEPLOY_LOCKED=1 bash "$0" "$@"
+  if command -v flock >/dev/null 2>&1; then
+    if [ -n "${DEPLOY_LOCK_WAIT:-}" ]; then
+      if flock -w "${DEPLOY_LOCK_WAIT}" "$LOCK_FILE" env DEPLOY_LOCKED=1 bash "$0" "$@"; then exit 0; fi
+      echo "[deploy] ERROR: deploy lock busy after ${DEPLOY_LOCK_WAIT}s ($LOCK_FILE)" >&2
+      exit 1
+    fi
+    if flock -n "$LOCK_FILE" env DEPLOY_LOCKED=1 bash "$0" "$@"; then exit 0; fi
+    echo "[deploy] ERROR: deploy lock busy ($LOCK_FILE). Set DEPLOY_LOCK_WAIT=300 to wait." >&2
+    exit 1
   fi
+
+  # Fallback if flock isn't installed: lock via mkdir (best-effort)
+  LOCK_DIR="${LOCK_FILE}.d"
+  if [ -n "${DEPLOY_LOCK_WAIT:-}" ]; then
+    end=$(( $(date +%s) + DEPLOY_LOCK_WAIT ))
+    while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+      if [ "$(date +%s)" -ge "$end" ]; then
+        echo "[deploy] ERROR: deploy lock busy after ${DEPLOY_LOCK_WAIT}s ($LOCK_DIR)" >&2
+        exit 1
+      fi
+      sleep 1
+    done
+  else
+    if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+      echo "[deploy] ERROR: deploy lock busy ($LOCK_DIR). Set DEPLOY_LOCK_WAIT=300 to wait." >&2
+      exit 1
+    fi
+  fi
+  trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
+  exec env DEPLOY_LOCKED=1 bash "$0" "$@"
 fi
 
 PM2_NAME="${PM2_NAME:-livechat}"   # fallback name
@@ -208,8 +234,7 @@ if [ -n "${SYNC_MIRROR_MODULES:-}" ]; then
           git clean -fdx modules || true
           # Remove the temporary lines we added
           if [ -f "$EXCL_FILE" ]; then
-            awk "BEGIN{skip=0} { if(\$0==\"$TMP_MARK\") skip=NR; if(!skip || NR==skip) print }" "$EXCL_FILE" | sed "/^$TMP_MARK$/,
-$ d" > "$EXCL_FILE.tmp" 2>/dev/null || true
+            awk -v mark="$TMP_MARK" '{ if ($0 == mark) exit; print }' "$EXCL_FILE" > "$EXCL_FILE.tmp" 2>/dev/null || true
             mv -f "$EXCL_FILE.tmp" "$EXCL_FILE" 2>/dev/null || true
           fi
         else

@@ -13,6 +13,9 @@ function backendDirFromModule() {
 export function registerZasilkovnaRoutes(app, ctx = {}) {
   const requireAdmin = ctx.requireAdmin || ((_req, res) => { res.status(401).json({ error: 'unauthorized' }); return null; });
   const pool = ctx.pool;
+  const isDbUnavailable = (e) => {
+    try { return (e?.message || String(e)) === 'db_unavailable'; } catch { return false; }
+  };
   const backendDir = backendDirFromModule();
   const dataDir = path.join(backendDir, 'uploads', 'grabbing-zasilkovna');
   try { fs.mkdirSync(dataDir, { recursive: true }); } catch {}
@@ -1233,6 +1236,7 @@ export function registerZasilkovnaRoutes(app, ctx = {}) {
       const rows = (await pool.query(sql, hasLimit ? [...vals, limitVal] : vals)).rows || [];
       return res.json({ ok:true, rows });
     } catch (e) {
+      if (isDbUnavailable(e)) return res.status(503).json({ ok:false, error:'db_unavailable' });
       return res.status(500).json({ ok:false, error:'server_error', message: e?.message || String(e) });
     }
   });
@@ -1650,10 +1654,14 @@ export function registerZasilkovnaRoutes(app, ctx = {}) {
   // List configs
   app.get('/api/grabbing-zasilkovna/configs', async (req, res) => {
     try {
+      if (!pool || typeof pool.query !== 'function') return res.status(503).json({ ok:false, error:'db_unavailable' });
       await ensureConfigTable();
       const r = await pool.query(`SELECT id, name, target, options, enabled, created_at, updated_at FROM mod_grabbing_zasilkovna_config ORDER BY updated_at DESC`);
       return res.json({ ok:true, items: r.rows });
-    } catch (e) { return res.status(500).json({ ok:false, error:'server_error', message: e?.message || String(e) }); }
+    } catch (e) {
+      if (isDbUnavailable(e)) return res.status(503).json({ ok:false, error:'db_unavailable' });
+      return res.status(500).json({ ok:false, error:'server_error', message: e?.message || String(e) });
+    }
   });
 
   // Create or upsert config

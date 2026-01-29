@@ -61,7 +61,9 @@ DO $$ BEGIN
 END $$;
 
 -- 5) Create triggers to keep TABLE in sync from CONFIG (one-way, config is canonical)
-DO $$
+-- IMPORTANT: this block defines functions using dollar-quoted bodies, so the DO block
+-- must NOT use $$ as its delimiter (otherwise the parser terminates the DO body early).
+DO $do$
 BEGIN
   -- Upsert on INSERT/UPDATE of config
   IF NOT EXISTS (
@@ -123,5 +125,4 @@ BEGIN
         FOR EACH ROW EXECUTE FUNCTION public.pdu_delete_profiles_from_config();
     END IF;
   END IF;
-END $$;
-
+END $do$;
