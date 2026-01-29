@@ -483,6 +483,16 @@ export default function ModuleManager() {
           fetch('/api/sidebar/submenus', { credentials: 'include' }),
           fetch('/api/sidebar/links', { credentials: 'include' }),
         ]);
+        const isAuthFailure = (r) => r && (r.status === 401 || r.status === 403);
+        // If endpoints are missing (404) or DB is unavailable (503), fall back to deriving from the generic library snapshot.
+        // Do NOT fall back on auth failures; the library endpoints are admin-only.
+        if (
+          !isAuthFailure(subsRes) &&
+          !isAuthFailure(linksRes) &&
+          ((subsRes && !subsRes.ok) || (linksRes && !linksRes.ok))
+        ) {
+          throw new Error(`sidebar_library_endpoints_failed:${subsRes?.status || 'na'}:${linksRes?.status || 'na'}`);
+        }
         if (subsRes && subsRes.ok) {
           const j = await subsRes.json();
           const arr = Array.isArray(j.items) ? j.items : [];
