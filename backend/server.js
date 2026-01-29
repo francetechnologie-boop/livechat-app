@@ -831,7 +831,7 @@ try {
     try {
       try { res.setHeader('Cache-Control', 'no-store'); } catch {}
       const p = await getPg();
-      if (!p) return res.status(503).json({ ok: false, error: 'db_unavailable' });
+      if (!p) return res.json({ ok: true, items: [], fallback: true, error: 'db_unavailable' });
 
       const table = 'public.mod_module_manager_sidebar_entries';
       if (!(await pgTableExists(table))) return res.json({ ok: true, items: [], fallback: true });
@@ -849,7 +849,7 @@ try {
       );
       return res.json({ ok: true, items: r.rows || [], fallback: true });
     } catch {
-      return res.status(503).json({ ok: false, error: 'db_unavailable' });
+      return res.json({ ok: true, items: [], fallback: true, error: 'db_unavailable' });
     }
   });
 
@@ -859,7 +859,7 @@ try {
     try {
       try { res.setHeader('Cache-Control', 'no-store'); } catch {}
       const p = await getPg();
-      if (!p) return res.status(503).json({ ok: false, error: 'db_unavailable' });
+      if (!p) return res.json({ ok: true, items: [], fallback: true, error: 'db_unavailable' });
 
       const table = 'public.mod_module_manager_sidebar_entries';
       if (!(await pgTableExists(table))) return res.json({ ok: true, items: [], fallback: true });
@@ -877,7 +877,7 @@ try {
       );
       return res.json({ ok: true, items: r.rows || [], fallback: true });
     } catch {
-      return res.status(503).json({ ok: false, error: 'db_unavailable' });
+      return res.json({ ok: true, items: [], fallback: true, error: 'db_unavailable' });
     }
   });
 

@@ -1,5 +1,5 @@
 Param(
-  [Parameter(Mandatory=$true)][string]$Host,
+  [Parameter(Mandatory=$true)][Alias('Host')][string]$SSHHost,
   [Parameter(Mandatory=$true)][string]$User,
   [int]$Port = 22,
   [string]$Dest = "/root/livechat-app",
@@ -11,10 +11,10 @@ Param(
 
 $ErrorActionPreference = 'Stop'
 
-Write-Host "[configure-remote-ssh] Host=$Host User=$User Port=$Port Dest=$Dest"
+Write-Host "[configure-remote-ssh] Host=$SSHHost User=$User Port=$Port Dest=$Dest"
 
 $cfg = [ordered]@{
-  host = $Host
+  host = $SSHHost
   user = $User
   port = $Port
   dest = $Dest
@@ -29,4 +29,3 @@ $cfg | ConvertTo-Json -Depth 5 | Out-File -FilePath $cfgPath -Encoding UTF8 -For
 Write-Host "[configure-remote-ssh] Saved $cfgPath"
 
 Write-Host "[configure-remote-ssh] You can now run: powershell -NoProfile -ExecutionPolicy Bypass -Command \"& '$PSScriptRoot/sync-and-deploy.ps1'\""
-

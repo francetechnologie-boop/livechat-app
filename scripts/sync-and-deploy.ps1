@@ -1,5 +1,5 @@
 Param(
-  [string]$Host,
+  [Alias('Host')][string]$SSHHost,
   [string]$User,
   [int]$Port,
   [string]$Dest,
@@ -35,7 +35,7 @@ function Get-CfgVal($name,$fallback) {
   return $fallback
 }
 
-$SSH_HOST = Get-CfgVal 'host' $Host
+$SSH_HOST = Get-CfgVal 'host' $SSHHost
 $SSH_USER = Get-CfgVal 'user' $User
 $SSH_PORT = Get-CfgVal 'port' ($(if ($Port) { $Port } else { 22 }))
 $DEST     = Get-CfgVal 'dest' $Dest
@@ -60,7 +60,6 @@ if (-not $bash) { throw "bash not found. Install Git for Windows or WSL." }
 # Repo root: this script is at livechat-app/scripts, repo root is two levels up
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 $RepoRootUnix = Convert-ToMsysPath $RepoRoot.Path
-$scriptPath = "$RepoRootUnix/sync+deploy.sh"
 
 # Build env assignment string for bash
 $envs = @()
@@ -80,4 +79,3 @@ Write-Host "[sync] Running: $envStr ./sync+deploy.sh"
 
 $cmd = "cd '$RepoRootUnix' && $envStr ./sync+deploy.sh"
 & $bash -lc $cmd
-
