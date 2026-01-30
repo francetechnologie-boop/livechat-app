@@ -1,0 +1,10 @@
+{
+  "id": "ssh-profil",
+  "name": "SSH Profil",
+  "description": "Manage SSH connection profiles and test access (groups/sudo).",
+  "category": "integration",
+  "version": "1.0.0",
+  "defaultInstalled": true,
+  "defaultActive": true
+}
+

@@ -6,6 +6,20 @@
 
 set -euo pipefail
 
+### ---------- DEPLOY LOG ----------
+# Keep a persistent deploy log for debugging "stuck" installs/builds.
+# Can be disabled with NO_DEPLOY_LOG=1.
+if [ -z "${NO_DEPLOY_LOG:-}" ]; then
+  # If APP_ROOT isn't known yet, log into the current working dir; later steps `cd` into APP_ROOT.
+  DEPLOY_LOG_FILE="${DEPLOY_LOG:-$(pwd)/deploy.log}"
+  # Append, but separate runs.
+  {
+    echo
+    echo "----- deploy start: $(date -u +'%Y-%m-%dT%H:%M:%SZ') -----"
+  } >>"$DEPLOY_LOG_FILE" 2>/dev/null || true
+  exec > >(tee -a "$DEPLOY_LOG_FILE") 2>&1
+fi
+
 ### ---------- ENV / PATH ----------
 export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 # Ensure Playwright downloads browsers into project-local cache by default
@@ -21,6 +35,20 @@ cd "$(dirname "$0")"
 APP_ROOT="$(pwd)"
 BACKEND="$APP_ROOT/backend"
 FRONTEND="$APP_ROOT/frontend"
+
+# Make npm installs lighter/more reliable on small VPSes unless explicitly overridden.
+# (The server can be memory constrained; npm audit/fund can add noticeable overhead.)
+export npm_config_audit="${npm_config_audit:-false}"
+export npm_config_fund="${npm_config_fund:-false}"
+export npm_config_progress="${npm_config_progress:-false}"
+
+# Default to low parallelism when the machine is under memory pressure.
+if [ -z "${npm_config_jobs:-}" ]; then
+  AVAIL_KB=$(awk '/MemAvailable:/ {print $2+0}' /proc/meminfo 2>/dev/null || echo 0)
+  if [ "${AVAIL_KB}" -gt 0 ] && [ "${AVAIL_KB}" -lt 800000 ]; then
+    export npm_config_jobs=2
+  fi
+fi
 
 # If the project was uploaded as a nested folder (common with SFTP uploading the local
 # "livechat-app/" directory into "$APP_ROOT"), overlay it into the real deploy root.
@@ -405,6 +433,47 @@ fi
 
 log "Starting deploy in $APP_ROOT"
 
+### ---------- NPM HELPERS ----------
+calc_lock_hash() {
+  # Hash package-lock.json to decide if we can reuse existing node_modules without running npm ci.
+  # Prefer sha256sum; fallback to shasum.
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum package-lock.json | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 package-lock.json | awk '{print $1}'
+  else
+    # No hashing tool available; force install.
+    echo ""
+  fi
+}
+
+maybe_npm_ci() {
+  # Args are passed to npm ci (e.g. --omit=dev). Uses lock hash to skip work when unchanged.
+  local stamp_file lock_hash old_hash
+  stamp_file="node_modules/.lockhash"
+  if [ -f package-lock.json ] && [ -d node_modules ]; then
+    lock_hash="$(calc_lock_hash)"
+    old_hash="$(cat "$stamp_file" 2>/dev/null || true)"
+    if [ -n "$lock_hash" ] && [ "$lock_hash" = "$old_hash" ]; then
+      log "npm: package-lock unchanged; skipping npm ci"
+      return 0
+    fi
+  fi
+
+  # Clean up any stale temp dirs from previous installs to avoid ENOTEMPTY
+  rm -rf node_modules/.agentkeepalive-* 2>/dev/null || true
+
+  # Run a lighter npm ci by default; audit/fund controlled via npm_config_* above.
+  npm ci "$@" --no-audit --no-fund
+
+  if [ -f package-lock.json ] && [ -d node_modules ]; then
+    lock_hash="$(calc_lock_hash)"
+    if [ -n "$lock_hash" ]; then
+      echo "$lock_hash" >"$stamp_file" 2>/dev/null || true
+    fi
+  fi
+}
+
 ### ---------- FREE SPACE CHECK ----------
 # Ensure we have enough free space before building the frontend
 check_free_space() {
@@ -434,20 +503,18 @@ if [ -d "$BACKEND" ]; then
   log "Backend: installing deps (omit dev)"
   pushd "$BACKEND" >/dev/null
   if [ -f package-lock.json ]; then
-    # Clean up any stale temp dirs from previous installs to avoid ENOTEMPTY
-    rm -rf node_modules/.agentkeepalive-* 2>/dev/null || true
-    npm ci --omit=dev || {
+    maybe_npm_ci --omit=dev || {
       log "Backend: npm ci failed; syncing lockfile and retrying"
       npm install --package-lock-only || true
-      npm ci --omit=dev || {
+      maybe_npm_ci --omit=dev || {
         log "Backend: npm ci failed again; cleaning and retrying"
         rm -rf node_modules
         npm cache clean --force || true
-        npm ci --omit=dev || npm install --omit=dev
+        maybe_npm_ci --omit=dev || npm install --omit=dev --no-audit --no-fund
       }
     }
   else
-    npm install --omit=dev
+    npm install --omit=dev --no-audit --no-fund
   fi
   log "Backend: dependencies installed"
   # Ensure Chromium browser is present for Playwright (skip if already installed)
@@ -642,20 +709,18 @@ elif [ -d "$FRONTEND" ]; then
   pushd "$FRONTEND" >/dev/null
   # devDependencies are needed for vite build
   if [ -f package-lock.json ]; then
-    # Clean up any stale temp dirs from previous installs to avoid ENOTEMPTY
-    rm -rf node_modules/.agentkeepalive-* 2>/dev/null || true
-    npm ci || {
+    maybe_npm_ci || {
       log "Frontend: npm ci failed; syncing lockfile and retrying"
       npm install --package-lock-only || true
-      npm ci || {
+      maybe_npm_ci || {
         log "Frontend: npm ci failed again; cleaning and retrying"
         rm -rf node_modules
         npm cache clean --force || true
-        npm ci || npm install
+        maybe_npm_ci || npm install --no-audit --no-fund
       }
     }
   else
-    npm install
+    npm install --no-audit --no-fund
   fi
 
   # Explicitly ensure critical packages exist to avoid Vite resolve errors

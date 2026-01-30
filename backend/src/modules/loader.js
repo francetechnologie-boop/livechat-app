@@ -29,12 +29,56 @@ async function getActiveModuleSetFromDb(pool) {
   } catch { return null; }
 }
 
+async function maybeAutoActivateMissingModule({ pool, modId, modDir, activeSet, log }) {
+  try {
+    if (!pool || !modId || !modDir || !activeSet || activeSet.has(modId)) return false;
+    // If a DB row exists, respect it (do not override a deliberate deactivate).
+    try {
+      const r = await pool.query("SELECT active FROM mod_module_manager_modules WHERE module_name = $1 LIMIT 1", [modId]);
+      if (r?.rows?.length) return false;
+    } catch {
+      return false;
+    }
+
+    // Only auto-seed if the manifest explicitly opts in via defaultActive/defaultInstalled.
+    let manifest = null;
+    try {
+      const cfgPath = path.join(modDir, 'config.json');
+      if (fs.existsSync(cfgPath)) manifest = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+    } catch { manifest = null; }
+
+    const defaultActive = !!(manifest && manifest.defaultActive);
+    const defaultInstalled = !!(manifest && manifest.defaultInstalled);
+    if (!defaultActive && !defaultInstalled) return false;
+
+    const version = (manifest && manifest.version) ? String(manifest.version) : '1.0.0';
+    const a = defaultActive ? 1 : 0;
+    const i = defaultInstalled ? 1 : 0;
+    try {
+      await pool.query(
+        `INSERT INTO mod_module_manager_modules (module_name, active, install, version, updated_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         ON CONFLICT (module_name) DO NOTHING`,
+        [modId, a, i, version]
+      );
+      if (defaultActive) activeSet.add(modId);
+      try { log?.(`${modId}: auto-seeded DB state (active=${a}, install=${i})`); } catch {}
+      return defaultActive;
+    } catch {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+}
+
 export async function loadModuleHooks(ctx = {}) {
   const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../../');
   const backendDir = path.join(repoRoot, 'backend');
   const modulesRoot = path.join(repoRoot, 'modules');
   let entries = [];
   try { entries = fs.readdirSync(modulesRoot, { withFileTypes: true }); } catch { return; }
+  const log = (msg) => { try { ctx.logToFile?.(`[modules] ${msg}`); } catch {} };
 
   // Determine which modules are active according to Module Manager DB state (if present).
   // If the table is absent or empty, do not gate loading (backward compatible behavior).
@@ -57,7 +101,10 @@ export async function loadModuleHooks(ctx = {}) {
     const cfgPath = path.join(modDir, 'module.config.json');
     if (!fs.existsSync(cfgPath)) continue;
     // Respect Module Manager state when available
-    if (activeSet && !activeSet.has(modId)) continue;
+    if (activeSet && !activeSet.has(modId)) {
+      await maybeAutoActivateMissingModule({ pool: ctx.pool, modId, modDir, activeSet, log });
+      if (!activeSet.has(modId)) continue;
+    }
     try {
       const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
       // If config explicitly disables, skip
@@ -137,7 +184,10 @@ export async function loadModuleRoutes(ctx = {}) {
     const cfgPath = path.join(modDir, 'module.config.json');
     if (!fs.existsSync(cfgPath)) continue;
     // Respect Module Manager state when available
-    if (activeSet && !activeSet.has(modId)) { log(`${modId}: skipped (inactive by DB state)`); continue; }
+    if (activeSet && !activeSet.has(modId)) {
+      await maybeAutoActivateMissingModule({ pool: ctx.pool, modId, modDir, activeSet, log });
+      if (!activeSet.has(modId)) { log(`${modId}: skipped (inactive by DB state)`); continue; }
+    }
     let cfg = null;
     try { cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8')); } catch { cfg = {}; }
     if (cfg && cfg.enabled === false) continue;
